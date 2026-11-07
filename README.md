@@ -31,6 +31,7 @@ One-time setup: go to repo **Settings → Pages → Build and deployment → Sou
 
 **Live OBD on PC** (Chrome or Edge, using Web Serial):
 - **Bluetooth ELM327:** pair it in Windows **Settings → Bluetooth & devices** (PIN 1234 or 0000). Windows then creates a COM port. In the app, go to **OBD → Connect adapter (COM/USB)** and pick "Standard Serial over Bluetooth link". If two show up, the outgoing one is usually the lower number.
+- **BLE adapter** (OBDLink CX, Vgate iCar Pro BLE, etc.): no pairing needed. Use **OBD → Connect BLE adapter** and pick it from the list.
 - **USB ELM327:** plug it in and pick its port. If it doesn't respond, try a different baud rate (38400, then 115200 or 9600).
 
 **Data** is stored separately on each device. To move your history between phone and PC, use **Garage → Export backup** on one and **Restore backup** on the other.

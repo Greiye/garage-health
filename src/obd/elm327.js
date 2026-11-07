@@ -125,6 +125,52 @@ export class WebSerialTransport {
   }
 }
 
+// PC/Android Chrome: Web Bluetooth for BLE (4.0+) ELM327 adapters such as
+// OBDLink CX or Vgate iCar Pro BLE. Classic adapters use WebSerialTransport.
+const BLE_PROFILES = [
+  { service: 0xfff0, notify: 0xfff1, write: 0xfff2 },
+  { service: 0xffe0, notify: 0xffe1, write: 0xffe1 },
+  { service: 0x18f0, notify: 0x2af0, write: 0x2af1 },
+  { service: 'e7810a71-73ae-499d-8c15-faa9aef0c3f2', notify: 'bef8d6c9-9c21-4c9e-b632-bd58c1009f9f', write: 'bef8d6c9-9c21-4c9e-b632-bd58c1009f9f' },
+];
+export class WebBleTransport extends WebSerialTransport {
+  static available() { return typeof navigator !== 'undefined' && 'bluetooth' in navigator; }
+  async connect() {
+    this.device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: BLE_PROFILES.map((p) => p.service) });
+    const gatt = await this.device.gatt.connect();
+    for (const p of BLE_PROFILES) {
+      try {
+        const svc = await gatt.getPrimaryService(p.service);
+        this.rx = await svc.getCharacteristic(p.notify);
+        this.tx = await svc.getCharacteristic(p.write);
+        break;
+      } catch {}
+    }
+    if (!this.rx) throw new Error('This Bluetooth device does not look like a BLE OBD adapter. Classic adapters: pair in Windows and use Connect adapter (COM/USB).');
+    this.buffer = '';
+    const dec = new TextDecoder();
+    this.rx.addEventListener('characteristicvaluechanged', (e) => this.onData(dec.decode(e.target.value)));
+    await this.rx.startNotifications();
+    this.address = this.device.id;
+  }
+  async send(cmd, timeout = 4000) {
+    this.buffer = '';
+    const done = new Promise((resolve, reject) => {
+      this.waiter = { resolve };
+      setTimeout(() => { if (this.waiter?.resolve === resolve) { this.waiter = null; reject(new Error(`Timeout on ${cmd}`)); } }, timeout);
+    });
+    const bytes = new TextEncoder().encode(cmd + '\r');
+    if (this.tx.properties.writeWithoutResponse) await this.tx.writeValueWithoutResponse(bytes);
+    else await this.tx.writeValue(bytes);
+    return done;
+  }
+  async disconnect() {
+    try { await this.rx?.stopNotifications(); } catch {}
+    try { this.device?.gatt.disconnect(); } catch {}
+    this.address = null;
+  }
+}
+
 // Browser demo: a simulated 2001-era Ford PCM on J1850 PWM so the whole OBD
 // screen can be tried on a PC without an adapter.
 export class DemoTransport {

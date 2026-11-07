@@ -1,6 +1,6 @@
 import { db, getSetting, setSetting } from '../data/db.js';
 import { addFlag } from '../data/repo.js';
-import { BluetoothTransport, WebSerialTransport, DemoTransport, Elm327, Poller } from '../obd/elm327.js';
+import { BluetoothTransport, WebSerialTransport, WebBleTransport, DemoTransport, Elm327, Poller } from '../obd/elm327.js';
 import { CHANNELS, evaluate } from '../obd/pids.js';
 import { describeDtc, partsForDtc, dtcSeverity } from '../obd/dtc.js';
 import { parseObdCsv, summarize, downsample } from '../obd/csvImport.js';
@@ -32,6 +32,7 @@ export async function renderObd(app, el) {
         <button class="btn" data-act="readdtc">Read codes</button>`
       : `${native ? `<button class="btn primary" data-act="scan">Find adapter</button>${lastAddr ? `<button class="btn" data-act="reconnect">Reconnect ${esc(lastAddr)}</button>` : ''}<button class="btn" data-act="manual">Enter MAC</button>` : ''}
         ${serial ? '<button class="btn primary" data-act="serial">Connect adapter (COM/USB)</button><select data-baud title="USB adapters: try 38400, then 115200 or 9600"><option>38400</option><option>115200</option><option>9600</option></select>' : ''}
+        ${!native && WebBleTransport.available() ? '<button class="btn" data-act="ble">Connect BLE adapter</button>' : ''}
         <button class="btn ${native || serial ? '' : 'primary'}" data-act="demo">Demo adapter</button>`}
     </div>
     <div class="devices"></div>
@@ -116,6 +117,7 @@ async function onClick(app, el, e) {
       });
     }
     if (act === 'demo') return connect(app, el, new DemoTransport(), 'DEMO');
+    if (act === 'ble') return connect(app, el, new WebBleTransport(), null);
     if (act === 'serial') return connect(app, el, new WebSerialTransport(), +(el.querySelector('[data-baud]')?.value || 38400));
     if (act === 'disconnect') return disconnect(app, el);
     if (act === 'record') {
