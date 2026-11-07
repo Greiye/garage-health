@@ -44,7 +44,15 @@ One-time setup: go to repo **Settings → Pages → Build and deployment → Sou
 - **BLE adapter** (OBDLink CX, Vgate iCar Pro BLE, etc.): no pairing needed. Use **OBD → Connect BLE adapter** and pick it from the list.
 - **USB ELM327:** plug it in and pick its port. If it doesn't respond, try a different baud rate (38400, then 115200 or 9600).
 
-**Data** is stored separately on each device. To move your history between phone and PC, use **Garage → Export backup** on one and **Restore backup** on the other.
+**Data** is stored on each device. Turn on sync (below) to keep the phone and PC matched, or move it by hand with **Garage → Export backup** and **Restore backup**.
+
+## Sync phone ⇄ PC (GitHub)
+Records, photos and receipts sync through a **separate private repo** that you own. They are never stored in this app repo.
+1. Create a private repo, e.g. `garage-health-data`, with a README so it isn't empty.
+2. Create a [fine-grained token](https://github.com/settings/personal-access-tokens/new) limited to that repo, with **Contents: Read and write**.
+3. In the app, go to **Garage → Sync phone ⇄ PC → Set up**. On a fresh device, use "Already using it on another device? Sync from GitHub" on the first screen.
+
+The app syncs when it opens, when you return to it, and about 15 seconds after a change. The header icon shows the state, and tapping it syncs right away. If both devices changed records before syncing, you choose which copy to keep. The other copy is saved under `garage/conflicts/`, and Git history keeps every version. The token stays on the device and is never included in backups or synced data.
 
 ## Android app (needed for the Bluetooth ELM327)
 

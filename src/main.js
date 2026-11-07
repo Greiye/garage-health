@@ -10,6 +10,7 @@ import { renderSpecs } from './ui/specsView.js';
 import { renderInspect } from './ui/inspectView.js';
 import { renderGarage, openOdometer, openVehicleWizard } from './ui/garageView.js';
 import { esc, fmtMi, $ } from './ui/util.js';
+import { initSync } from './ui/syncView.js';
 
 const TABS = [
   ['health', 'Health', '◉'],
@@ -111,6 +112,7 @@ function shell() {
     <button class="veh" id="veh-btn" title="Switch vehicle"><span id="veh-name">…</span><span id="veh-sub" class="muted small"></span></button>
     <span class="grow"></span>
     <button class="badge-red blink-soft" id="alert-count" hidden></button>
+    <button class="sync-ind" id="sync-ind" hidden title="Sync"></button>
     <button class="odo" id="odo-btn" title="Update odometer"><span class="muted small">ODO</span> <b id="odo">—</b></button>
   </header>
   <main class="layout">
@@ -166,6 +168,7 @@ async function boot() {
     if (b) app.showTab(b.dataset.tab);
   };
 
+  initSync();
   const id = await currentVehicleId();
   if (id) await app.loadVehicle(id);
   else openVehicleWizard(app, { first: true });

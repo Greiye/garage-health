@@ -1,3 +1,4 @@
+import { syncCardHTML, onSyncClick, openSyncSetup } from './syncView.js';
 import { db, setSetting, exportBackup, importBackup, todayISO } from '../data/db.js';
 import { createVehicle, applyOptions, setOdometer } from '../data/repo.js';
 import { PRESETS, OPTION_FIELDS, SYSTEMS } from '../data/templates.js';
@@ -9,6 +10,7 @@ export async function renderGarage(app, el) {
   const v = app.st.vehicle;
   const odo = (await db.odometer.where({ vehicleId: v.id }).toArray()).sort((a, b) => (a.date < b.date ? 1 : -1));
   const hidden = app.st.allParts.filter((p) => p.hidden);
+  const syncCard = await syncCardHTML();
   el.innerHTML = `
   <section class="card"><div class="sec-head"><h3>Vehicles</h3><button class="btn small primary" data-act="add">Add vehicle</button></div>
     <ul class="list">${vehicles.map((x) => `<li class="row-item ${x.id === v.id ? 'current' : ''}" data-vehicle="${x.id}"><span class="swatch" style="background:${esc(x.bodyColor)}"></span><div class="grow"><div>${esc(x.name)}</div><div class="muted small">${esc([x.engine, x.transmission].filter(Boolean).join(' · '))} · ${fmtMi(x.odometer)}</div></div>${x.id === v.id ? '<span class="muted small">current</span>' : '<span>›</span>'}</li>`).join('')}</ul>
@@ -28,6 +30,7 @@ export async function renderGarage(app, el) {
     ${hidden.length ? `<details class="small"><summary>Hidden parts (${hidden.length})</summary><ul class="list compact">${hidden.map((p) => `<li class="row-item"><span class="grow">${esc(p.name)}</span><button class="btn small" data-unhide="${p.id}">Restore</button></li>`).join('')}</ul></details>` : ''}
   </section>
 
+  ${syncCard}
   <section class="card"><h3>Backup</h3>
     <p class="muted small">Everything is stored on this device. Export a full backup (including photos and receipts) to move it or keep it safe.</p>
     <div class="actions"><button class="btn" data-act="export">Export backup</button><label class="btn file-btn">Restore backup<input type="file" accept="application/json,.json" data-import hidden></label></div>
@@ -39,7 +42,8 @@ export async function renderGarage(app, el) {
   <section class="card danger-zone"><button class="btn danger small" data-act="delete">Delete ${esc(v.name)}</button></section>`;
 
   el.onclick = async (e) => {
-    const t = e.target.closest('[data-act],[data-vehicle],[data-unhide],[data-csv-x]');
+    const t = e.target.closest('[data-act],[data-vehicle],[data-unhide],[data-csv-x],[data-sync]');
+    if (t?.dataset.sync) return onSyncClick(app, t.dataset.sync, () => renderGarage(app, el));
     if (!t) return;
     if (t.dataset.vehicle) { await setSetting('currentVehicle', +t.dataset.vehicle); return app.loadVehicle(+t.dataset.vehicle); }
     if (t.dataset.unhide) { await db.parts.update(+t.dataset.unhide, { hidden: false, userHidden: false }); return app.refresh(); }
@@ -111,13 +115,13 @@ export function openVehicleWizard(app, { first = false } = {}) {
     <div data-vfields>${vehicleFields(preset0.vehicle)}</div>
     <div class="grid2"><label>Current odometer (mi)<input type="number" name="odometer" required inputmode="numeric" value="${first ? 180200 : ''}"></label></div>
     <details><summary>Configuration</summary><p class="muted small">Decides which parts exist and how the 3D model is built. Change later in Garage.</p><div data-opts>${optionInputs(preset0.options)}</div></details>
-    <div class="row end">${first ? '' : '<button class="btn" type="button" data-close>Cancel</button>'}<button class="btn primary" type="submit">Create</button></div></form>`, {
+    <div class="row ${first ? 'between' : 'end'}">${first ? '<button class="btn" type="button" data-from-sync>Already using it on another device? Sync from GitHub</button>' : '<button class="btn" type="button" data-close>Cancel</button>'}<button class="btn primary" type="submit">Create</button></div></form>`, {
     wide: true,
-    onMount: (root) => root.querySelector('[name=preset]').addEventListener('change', (e) => {
+    onMount: (root, close) => { root.querySelector('[data-from-sync]')?.addEventListener('click', () => { close(); openSyncSetup(() => location.reload()); }); root.querySelector('[name=preset]').addEventListener('change', (e) => {
       const p = PRESETS.find((x) => x.id === e.target.value);
       root.querySelector('[data-vfields]').innerHTML = vehicleFields(p.vehicle);
       root.querySelector('[data-opts]').innerHTML = optionInputs(p.options);
-    }),
+    }); },
     onSubmit: async (fd) => {
       const p = PRESETS.find((x) => x.id === fd.get('preset'));
       const vehicle = readVehicle(fd);

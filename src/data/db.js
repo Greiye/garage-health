@@ -54,7 +54,8 @@ const blobToDataURL = (blob) =>
 export async function exportBackup() {
   const out = { app: 'garage-health', version: 1, exportedAt: new Date().toISOString(), tables: {} };
   for (const t of db.tables) {
-    const rows = await t.toArray();
+    let rows = await t.toArray();
+    if (t.name === 'settings') rows = rows.filter((r) => !LOCAL_ONLY_SETTINGS.includes(r.key)); // never export the sync token
     if (t.name === 'attachments') {
       for (const r of rows) if (r.blob instanceof Blob) r.blob = await blobToDataURL(r.blob);
     }
@@ -63,13 +64,18 @@ export async function exportBackup() {
   return new Blob([JSON.stringify(out)], { type: 'application/json' });
 }
 
+// Settings that belong to this device only (sync credentials and state).
+export const LOCAL_ONLY_SETTINGS = ['sync', 'syncState', 'obdAddress'];
+
 export async function importBackup(file) {
   const data = JSON.parse(await file.text());
   if (data.app !== 'garage-health') throw new Error('Not a Garage Health backup file');
+  const keep = (await db.settings.toArray()).filter((r) => LOCAL_ONLY_SETTINGS.includes(r.key));
   await db.transaction('rw', db.tables, async () => {
     for (const t of db.tables) {
       await t.clear();
-      const rows = data.tables[t.name] || [];
+      let rows = data.tables[t.name] || [];
+      if (t.name === 'settings') rows = [...rows.filter((r) => !LOCAL_ONLY_SETTINGS.includes(r.key)), ...keep];
       if (t.name === 'attachments') {
         for (const r of rows) if (typeof r.blob === 'string') r.blob = await (await fetch(r.blob)).blob();
       }
