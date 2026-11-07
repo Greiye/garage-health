@@ -14,6 +14,15 @@ const chk = (brand, pn, note) => ({ brand, pn, verified: false, note });
 export default {
   id: 'mustang-2001-v6-manual',
   label: '2001 Mustang 3.8 V6 manual',
+  // OBD healthy ranges used by the diagnostics engine (typical values for a
+  // healthy 3.8 Essex; 192°F thermostat, MAF-based EEC-V). Edit per car as needed.
+  obdRanges: {
+    displacementL: 3.8,
+    idleRpm: [575, 850],
+    coolantRun: [188, 220],
+    idleTiming: [8, 26],
+    mafIdlePerL: [0.7, 1.4],
+  },
   items: {
     // ---- Fluids (all from the owner guide) ----
     f_oil: { spec: 'SAE 5W-20, Ford WSS-M2C153-H, API certified', capacity: '5.0 qt (4.7 L) with filter', pns: [ok('Motorcraft', 'XO-5W20-QSP')] },

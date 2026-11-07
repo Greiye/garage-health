@@ -47,6 +47,14 @@ function runRow(r, items) {
     <div class="grow"><div>${esc(r.title)}</div><div class="muted small">${fmtDate(r.date)} · ${fmtMi(r.miles)} · ${r.status === 'done' ? 'Finished' : `Draft ${done}/${total}`}${c('fail') ? ` · ${c('fail')} fail` : ''}${c('watch') ? ` · ${c('watch')} watch` : ''}</div></div></li>`;
 }
 
+// Start one test from elsewhere in the app (e.g. a diagnosis).
+export async function openTest(app, testId) {
+  const t = inspectionDefs(app.st.vehicle).tests.find((x) => x.id === testId);
+  if (!t) return;
+  app.showTab('inspect');
+  await begin(app, null, { kind: 'tests', testIds: [testId], title: t.name });
+}
+
 async function begin(app, el, opts) {
   app.inspectionId = await startInspection(app.st.vehicle, opts);
   await app.refresh();

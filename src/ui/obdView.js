@@ -5,6 +5,8 @@ import { CHANNELS, PIDS, evaluate } from '../obd/pids.js';
 import { describeDtc, partsForDtc, dtcSeverity } from '../obd/dtc.js';
 import { parseObdCsv, summarize, downsample } from '../obd/csvImport.js';
 import { exportObdSessionCsv } from './csvExport.js';
+import { analyze } from '../obd/diagnostics.js';
+import { diagnosisHTML, onDiagClick } from './diagView.js';
 import { esc, fmtDate, toast, modal, confirmDialog } from './util.js';
 
 const GAUGES = ['rpm', 'speed', 'coolant', 'voltage', 'ltft1', 'ltft2', 'stft1', 'stft2', 'iat', 'maf', 'throttle', 'load', 'timing', 'o2_b1s1', 'o2_b2s1', 'o2_b1s2', 'o2_b2s2'];
@@ -25,7 +27,7 @@ async function saveDashConfig(vehicleId, cfg) {
 const pidsFor = (cfg) => [...ALWAYS_PIDS, ...cfg.gauges.filter((ch) => ch !== 'voltage').map((ch) => CH_PID[ch]).filter(Boolean)];
 
 // Connection state survives tab switches.
-const live = { autoTried: new Set(), elm: null, transport: null, poller: null, sample: {}, recording: null, status: 'disconnected', info: null, log: [], alerts: new Map() };
+const live = { buf: [], diag: null, dtcCodes: [], autoTried: new Set(), elm: null, transport: null, poller: null, sample: {}, recording: null, status: 'disconnected', info: null, log: [], alerts: new Map() };
 
 export async function renderObd(app, el) {
   const native = BluetoothTransport.available();
@@ -35,6 +37,8 @@ export async function renderObd(app, el) {
   const sessions = await db.obdSessions.where({ vehicleId: app.st.vehicle.id }).reverse().sortBy('date');
   const dtcs = await db.dtcs.where({ vehicleId: app.st.vehicle.id }).toArray();
   const activeDtcs = dtcs.filter((d) => d.active);
+  live.dtcCodes = activeDtcs.map((d) => d.code);
+  if (live.buf.length) live.diag = analyze(live.buf, { vehicle: app.st.vehicle, dtcs: live.dtcCodes });
 
   el.innerHTML = `
   <section class="card">
@@ -64,6 +68,11 @@ export async function renderObd(app, el) {
     ${live.alerts.size ? `<ul class="list alerts">${[...live.alerts.values()].map((a) => `<li class="row-item"><span class="dot lv-${a.sev === 'critical' ? 'red' : a.sev === 'warn' ? 'orange' : 'yellow'}"></span>${esc(a.text)}</li>`).join('')}</ul>` : ''}
     <details class="small"><summary>Adapter log</summary><pre class="log">${esc(live.log.slice(-60).join('\n'))}</pre></details>
   </section>
+
+  ${live.buf.length || live.status === 'connected' ? `<section class="card" data-diag-card>
+    <div class="sec-head"><h3>Diagnosis</h3><span class="muted small">live, last ${Math.max(1, Math.round(((live.buf.at(-1)?.t ?? 0) - (live.buf[0]?.t ?? 0)) / 60))} min</span><button class="btn small" data-act="rediag">Re-check</button></div>
+    <div data-diag-body>${live.diag ? diagnosisHTML(app, live.diag, { compact: true }) : '<p class="muted small">Collecting data. The first diagnosis shows after about 15 seconds.</p>'}</div>
+  </section>` : ''}
 
   <section class="card">
     <div class="sec-head"><h3>Trouble codes</h3>${live.status === 'connected' && activeDtcs.length ? '<button class="btn small danger" data-act="cleardtc">Clear codes</button>' : ''}</div>
@@ -125,6 +134,7 @@ function updateGauges(el) {
 }
 
 async function onClick(app, el, e) {
+  if (e.target.closest('[data-diag-card]') && live.diag && await onDiagClick(app, e, live.diag, { source: 'live data' })) return;
   const t = e.target.closest('[data-act],[data-session],[data-dev],[data-dtc-off]');
   if (!t) return;
   const act = t.dataset.act;
@@ -170,6 +180,7 @@ async function onClick(app, el, e) {
     if (act === 'serial') return connect(app, el, new WebSerialTransport(), +(el.querySelector('[data-baud]')?.value || 38400));
     if (act === 'disconnect') return disconnect(app, el);
     if (act === 'fullscreen') return openFullscreen(app);
+    if (act === 'rediag') { lastDiag = 0; return updateDiag(app); }
     if (act === 'gauges') return chooseGauges(app, el);
     if (act === 'record') {
       if (live.recording) {
@@ -225,6 +236,8 @@ const looksObd = (d) => (/obd|elm|v-?link|vpeak|vp\d|vgate|icar|konnwei|scan|car
 async function connect(app, el, transport, address, name) {
   live.status = 'connecting';
   live.log = [];
+  live.buf = [];
+  live.diag = null;
   renderObd(app, el);
   try {
     await transport.connect(address);
@@ -264,8 +277,20 @@ async function disconnect(app, el) {
 }
 
 let lastFlagWrite = 0;
+let lastDiag = 0;
+function updateDiag(app) {
+  if (!live.buf.length) return;
+  lastDiag = Date.now();
+  live.diag = analyze(live.buf, { vehicle: app.st.vehicle, dtcs: live.dtcCodes });
+  const body = document.querySelector('#panel .obd-view [data-diag-body]');
+  if (body) body.innerHTML = diagnosisHTML(app, live.diag, { compact: true });
+}
 async function onSample(app, s) {
   Object.assign(live.sample, s);
+  // Rolling buffer for the live diagnosis: last 15 minutes, times in seconds.
+  live.buf.push({ ...live.sample, t: s.t / 1000 });
+  while (live.buf.length > 4000 || (live.buf.length && live.buf.at(-1).t - live.buf[0].t > 900)) live.buf.shift();
+  if (Date.now() - lastDiag > 15000) updateDiag(app);
   if (live.recording) live.recording.rows.push({ ...s, t: (s.t - live.recording.t0) / 1000 });
   const hits = evaluate(live.sample);
   live.alertsByCh = {};
@@ -334,9 +359,12 @@ async function importCsv(app, el, files) {
 
 async function openSession(app, id) {
   const s = await db.obdSessions.get(id);
+  const codes = (await db.dtcs.where({ vehicleId: app.st.vehicle.id }).toArray()).filter((d) => d.active).map((d) => d.code);
+  const diag = analyze(s.rows || [], { vehicle: app.st.vehicle, dtcs: codes });
   const chans = Object.keys(s.stats).filter((c) => CHANNELS[c]);
   const first = chans.includes('coolant') ? 'coolant' : chans[0];
   const html = `
+    <section class="diag" data-diag-sess><h4>Diagnosis</h4>${diagnosisHTML(app, diag, { compact: true })}</section>
     ${s.alerts?.length ? `<div class="callout warn"><b>${s.alerts.length} issue${s.alerts.length > 1 ? 's' : ''} found in this log</b><ul>${s.alerts.map((a) => `<li>${esc(a.text)} <span class="muted small">at ${a.at?.toFixed?.(0) ?? '?'} s</span></li>`).join('')}</ul><button class="btn small" data-apply>Flag these parts</button></div>` : '<p class="muted small">No out-of-range readings found.</p>'}
     <label>Chart<select data-ch>${chans.map((c) => `<option value="${c}" ${c === first ? 'selected' : ''}>${esc(CHANNELS[c].name)} (${esc(CHANNELS[c].unit)})</option>`).join('')}</select></label>
     <canvas class="chart" width="900" height="260"></canvas>
@@ -346,6 +374,7 @@ async function openSession(app, id) {
   modal(s.name, html, {
     wide: true,
     onMount: (root, close) => {
+      root.querySelector('[data-diag-sess]').onclick = (e) => onDiagClick(app, e, diag, { source: `log ${s.name}`, onDone: close });
       const cv = root.querySelector('canvas'), sel = root.querySelector('[data-ch]');
       const draw = () => drawChart(cv, s.rows, sel.value);
       if (sel) { sel.onchange = draw; draw(); }
