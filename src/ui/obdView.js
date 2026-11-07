@@ -5,7 +5,8 @@ import { CHANNELS, PIDS, evaluate } from '../obd/pids.js';
 import { describeDtc, partsForDtc, dtcSeverity } from '../obd/dtc.js';
 import { parseObdCsv, summarize, downsample } from '../obd/csvImport.js';
 import { exportObdSessionCsv } from './csvExport.js';
-import { analyze } from '../obd/diagnostics.js';
+import { analyze, rangesFor } from '../obd/diagnostics.js';
+import { scaleFor, zoneGradient, needlePct, zoneAt } from '../obd/scales.js';
 import { diagnosisHTML, onDiagClick } from './diagView.js';
 import { esc, fmtDate, toast, modal, confirmDialog } from './util.js';
 
@@ -34,6 +35,7 @@ export async function renderObd(app, el) {
   const serial = !native && WebSerialTransport.available();
   const saved = native ? await savedAdapter(app.st.vehicle.id) : null;
   live.cfg = await dashConfig(app.st.vehicle.id);
+  live.R = rangesFor(app.st.vehicle);
   const sessions = await db.obdSessions.where({ vehicleId: app.st.vehicle.id }).reverse().sortBy('date');
   const dtcs = await db.dtcs.where({ vehicleId: app.st.vehicle.id }).toArray();
   const activeDtcs = dtcs.filter((d) => d.active);
@@ -117,7 +119,19 @@ function gauge(ch) {
   const d = CHANNELS[ch];
   const v = live.sample[ch];
   const bad = live.alertsByCh?.[ch];
-  return `<div class="gauge ${bad ? 'g-' + bad : ''}" data-g="${ch}"><span class="g-name">${esc(d.name)}</span><span class="g-val">${v == null ? '—' : v.toFixed(d.dp)}</span><span class="g-unit">${esc(d.unit)}</span></div>`;
+  const sc = live.R ? scaleFor(ch, live.R) : null;
+  const txt = v == null ? '—' : v.toFixed(d.dp);
+  const bar = sc ? `<span class="gbar" style="background:${zoneGradient(sc)}"><i class="gneedle" style="left:${v == null ? 0 : needlePct(sc, v)}%" ${v == null ? 'hidden' : ''}><b class="gnv">${txt}</b></i><span class="gmin">${sc.min}</span><span class="gmax">${sc.max}</span></span>` : '';
+  return `<div class="gauge ${gaugeClass(ch, v)}" data-g="${ch}"><span class="g-name">${esc(d.name)}</span><span class="g-val">${txt}</span><span class="g-unit">${esc(d.unit)}</span>${bar}</div>`;
+}
+
+// Alert from the rules wins; otherwise the zone the needle sits in colors the tile.
+function gaugeClass(ch, v) {
+  const bad = live.alertsByCh?.[ch];
+  if (bad) return 'g-' + bad;
+  const sc = v != null && live.R ? scaleFor(ch, live.R) : null;
+  const z = sc && zoneAt(sc, v);
+  return z === 'red' ? 'g-critical' : z === 'orange' ? 'g-warn' : z === 'yellow' ? 'g-watch' : '';
 }
 
 function updateGauges(el) {
@@ -126,8 +140,14 @@ function updateGauges(el) {
   for (const g of document.querySelectorAll('.obd-fs [data-g]' + (el ? ', #panel .obd-view [data-g]' : ''))) {
     const ch = g.dataset.g;
     const v = live.sample[ch];
-    g.querySelector('.g-val').textContent = v == null ? '—' : v.toFixed(CHANNELS[ch].dp);
-    g.className = `gauge ${live.alertsByCh?.[ch] ? 'g-' + live.alertsByCh[ch] : ''}`;
+    const txt = v == null ? '—' : v.toFixed(CHANNELS[ch].dp);
+    g.querySelector('.g-val').textContent = txt;
+    const n = g.querySelector('.gneedle');
+    if (n) {
+      n.hidden = v == null;
+      if (v != null) { n.style.left = `${needlePct(scaleFor(ch, live.R), v)}%`; n.firstChild.textContent = txt; }
+    }
+    g.className = `gauge ${gaugeClass(ch, v)}`;
   }
   const rec = el?.querySelector('[data-act=record]');
   if (rec && live.recording) rec.textContent = `Stop recording (${live.recording.rows.length})`;
@@ -447,11 +467,12 @@ function chooseGauges(app, el) {
 async function openFullscreen(app) {
   document.querySelector('.obd-fs')?.remove();
   const fs = document.createElement('div');
-  fs.className = `obd-fs fs-${live.cfg.fsStyle === 'large' ? 'large' : 'compact'}`;
+  const fsStyle = ['compact', 'bars', 'large'].includes(live.cfg.fsStyle) ? live.cfg.fsStyle : 'compact';
+  fs.className = `obd-fs fs-${fsStyle}`;
   fs.innerHTML = `
     <div class="fs-bar"><b>${esc(app.st.vehicle.name)}</b><span class="status st-${live.status}">${esc(live.status)}</span><span class="muted small" data-hz></span><span class="grow"></span>
       <select data-rate>${RATES.map(([ms, l]) => `<option value="${ms}" ${ms === live.cfg.rateMs ? 'selected' : ''}>${l}</option>`).join('')}</select>
-      <button class="btn small" data-style>${live.cfg.fsStyle === 'large' ? 'Compact' : 'Large'}</button>
+      <select data-style title="Layout">${[['compact', 'Compact'], ['bars', 'Bars'], ['large', 'Large']].map(([k, l]) => `<option value="${k}" ${k === fsStyle ? 'selected' : ''}>${l}</option>`).join('')}</select>
       <button class="btn small" data-exit>✕ Exit</button></div>
     <div class="fs-gauges">${live.cfg.gauges.map((ch) => gauge(ch)).join('')}</div>
     <ul class="fs-alerts"></ul>`;
@@ -467,11 +488,9 @@ async function openFullscreen(app) {
   const onKey = (e) => { if (e.key === 'Escape') exit(); };
   document.addEventListener('keydown', onKey);
   fs.querySelector('[data-exit]').onclick = exit;
-  fs.querySelector('[data-style]').onclick = async (e) => {
-    const large = live.cfg.fsStyle !== 'large';
-    await saveDashConfig(app.st.vehicle.id, { ...live.cfg, fsStyle: large ? 'large' : 'compact' });
-    fs.className = `obd-fs fs-${large ? 'large' : 'compact'}`;
-    e.target.textContent = large ? 'Compact' : 'Large';
+  fs.querySelector('[data-style]').onchange = async (e) => {
+    await saveDashConfig(app.st.vehicle.id, { ...live.cfg, fsStyle: e.target.value });
+    fs.className = `obd-fs fs-${e.target.value}`;
   };
   fs.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && document.body.contains(fs)) exit(); });
   try { await fs.requestFullscreen?.({ navigationUI: 'hide' }); } catch {}

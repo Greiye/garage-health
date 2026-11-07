@@ -234,3 +234,24 @@ canvas.chart { width: 100%; height: auto; background: var(--bg); border-radius: 
 .conf-high { color: var(--red); border-color: var(--red); } .conf-medium { color: var(--orange); border-color: var(--orange); } .conf-low { color: var(--muted); }
 .evid { margin: .2rem 0 .3rem 1rem; padding: 0; }
 .diag-checks td, .diag-checks th { padding: .2rem .35rem; }
+
+/* Bar gauges: colored zones, needle, value riding above the needle */
+.gbar { position: relative; display: block; flex: none; height: 6px; border-radius: 3px; margin-top: .35rem; opacity: .9; }
+.gneedle { position: absolute; top: -4px; bottom: -4px; width: 3px; margin-left: -1.5px; background: var(--text); border-radius: 2px; box-shadow: 0 0 0 1px var(--card); transition: left .25s linear; }
+.gnv, .gmin, .gmax { display: none; }
+.fs-compact .gbar { display: none; }
+/* Full-screen Bars layout */
+.fs-bars .fs-gauges { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: .35rem 1.2rem; }
+.fs-bars .gauge { display: grid; grid-template-columns: 7.5rem 1fr 2.4rem; grid-template-rows: auto; align-items: end; padding: 1.25rem .4rem .35rem; background: transparent; border-width: 0 0 1px; border-radius: 0; }
+.fs-bars .g-name { grid-column: 1; font-size: .8rem; align-self: center; }
+.fs-bars .g-val { display: none; }
+.fs-bars .g-unit { grid-column: 3; grid-row: 1; font-size: .72rem; align-self: center; padding-left: .3rem; }
+.fs-bars .gbar { grid-column: 2; grid-row: 1; height: 10px; margin: 0; align-self: center; }
+.fs-bars .gneedle { top: -5px; bottom: -5px; width: 4px; margin-left: -2px; }
+.fs-bars .gnv { display: block; position: absolute; bottom: calc(100% + 1px); left: 50%; transform: translateX(-50%); font-size: .95rem; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--text); white-space: nowrap; }
+.fs-bars .gmin, .fs-bars .gmax { display: block; position: absolute; top: 100%; margin-top: 2px; font-size: .6rem; color: var(--muted); }
+.fs-bars .gmin { left: 0; } .fs-bars .gmax { right: 0; }
+.fs-bars .g-critical .gnv { color: var(--red); } .fs-bars .g-warn .gnv { color: var(--orange); }
+.fs-bars .g-critical, .fs-bars .g-warn { border-width: 0 0 1px; animation: none; }
+.fs-bars .g-critical .gneedle { animation: blink .9s infinite; }
+.fs-large .gbar { align-self: stretch; margin: .4rem 10% 0; height: 10px; }

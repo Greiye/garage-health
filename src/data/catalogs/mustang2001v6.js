@@ -18,6 +18,7 @@ export default {
   // healthy 3.8 Essex; 192°F thermostat, MAF-based EEC-V). Edit per car as needed.
   obdRanges: {
     displacementL: 3.8,
+    redline: 6000,
     idleRpm: [575, 850],
     coolantRun: [188, 220],
     idleTiming: [8, 26],
