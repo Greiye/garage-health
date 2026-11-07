@@ -1,6 +1,7 @@
 import { db, setSetting, exportBackup, importBackup, todayISO } from '../data/db.js';
 import { createVehicle, applyOptions, setOdometer } from '../data/repo.js';
 import { PRESETS, OPTION_FIELDS, SYSTEMS } from '../data/templates.js';
+import { exportServicesCsv, exportPartsCsv, exportTiresCsv, exportCostsCsv } from './csvExport.js';
 import { esc, fmtMi, fmtDate, modal, toast, confirmDialog, download, num } from './util.js';
 
 export async function renderGarage(app, el) {
@@ -31,13 +32,18 @@ export async function renderGarage(app, el) {
     <p class="muted small">Everything is stored on this device. Export a full backup (including photos and receipts) to move it or keep it safe.</p>
     <div class="actions"><button class="btn" data-act="export">Export backup</button><label class="btn file-btn">Restore backup<input type="file" accept="application/json,.json" data-import hidden></label></div>
   </section>
+  <section class="card"><h3>Export CSV</h3>
+    <p class="muted small">Spreadsheets for Excel or Google Sheets. OBD sessions and inspections export from their own screens.</p>
+    <div class="actions"><button class="btn" data-csv-x="services">Service log</button><button class="btn" data-csv-x="parts">Parts & health</button><button class="btn" data-csv-x="tires">Tires</button><button class="btn" data-csv-x="costs">Costs by year</button></div>
+  </section>
   <section class="card danger-zone"><button class="btn danger small" data-act="delete">Delete ${esc(v.name)}</button></section>`;
 
   el.onclick = async (e) => {
-    const t = e.target.closest('[data-act],[data-vehicle],[data-unhide]');
+    const t = e.target.closest('[data-act],[data-vehicle],[data-unhide],[data-csv-x]');
     if (!t) return;
     if (t.dataset.vehicle) { await setSetting('currentVehicle', +t.dataset.vehicle); return app.loadVehicle(+t.dataset.vehicle); }
     if (t.dataset.unhide) { await db.parts.update(+t.dataset.unhide, { hidden: false, userHidden: false }); return app.refresh(); }
+    if (t.dataset.csvX) return ({ services: exportServicesCsv, parts: exportPartsCsv, tires: exportTiresCsv, costs: exportCostsCsv })[t.dataset.csvX](app.st);
     const a = t.dataset.act;
     if (a === 'add') openVehicleWizard(app);
     if (a === 'edit') openVehicleEdit(app);

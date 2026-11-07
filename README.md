@@ -17,6 +17,14 @@ Vehicle maintenance tracker with a 3D health map. It's built for any vehicle, an
 - **Inspect**: a 150+ point inspection (220 points for the Mustang) and a battery of 39 tests (compression, leak-down, vacuum, cooling pressure, block test, fuel pressure, injector balance, battery load, charging, voltage drop, parasitic draw, fuel trims, O2, backpressure, brake measurements, suspension play, ride height, clutch slip and more). Every check and test maps to parts. Measurements pass or fail against limits automatically. Finishing a run flags watch/fail items on their parts (yellow/orange/red on the model, critical safety items blink), clears flags for items that now pass, marks passed parts green and saves measurements (tread, pads, battery, compression) into each part's history.
 - **Garage**: multiple vehicles built from templates, configuration options that decide which parts exist, custom parts, odometer history, and a full JSON backup including photos.
 
+## CSV export
+- **Garage → Export CSV:** service log, parts & health (every part with brand, part number, install date and miles, interval, last service, health and active issues), tires (current and removed, with DOT age, tread and position history) and costs by year and system.
+- **Log tab → Export CSV:** the service log.
+- **OBD session → Export CSV:** uses OBD Fusion-style `Name (unit)` columns, and the file re-imports into the app.
+- **Inspection → Export CSV:** every check with its result, value, note and the parts it covers, plus test results.
+
+On Android, exports open the share sheet so you can save to Files or Drive, or email them.
+
 ## Run locally (development)
 
 ```bash

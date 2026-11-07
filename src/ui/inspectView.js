@@ -1,6 +1,7 @@
 import { db } from '../data/db.js';
 import { STATUS, measureStatus, evaluateTest } from '../data/inspection.js';
 import { inspectionDefs, startInspection, saveInspectionDraft, completeInspection, deleteInspection } from '../data/repo.js';
+import { exportInspectionCsv } from './csvExport.js';
 import { esc, fmtMi, fmtDate, modal, toast, confirmDialog, num } from './util.js';
 
 // ---------- Inspect tab: 150+ point checklist and test battery ----------
@@ -136,7 +137,7 @@ function renderRun(app, el, run) {
     }).join('')}
     ${runTests.length ? `<section><h3>Tests</h3>${runTests.map(testHTML).join('')}</section>` : ''}
     ${done ? '' : `<div class="actions"><button class="btn" data-act="addtest">Add a test</button></div>`}
-    <div class="row between">${'<button class="btn danger" data-act="delete">Delete</button>'}${done ? '' : '<button class="btn primary" data-act="finish">Finish & update health</button>'}</div>`;
+    <div class="row between">${'<button class="btn danger" data-act="delete">Delete</button>'}<button class="btn" data-act="csv">Export CSV</button>${done ? '' : '<button class="btn primary" data-act="finish">Finish & update health</button>'}</div>`;
 
   const refreshProg = () => { el.querySelector('[data-prog]').innerHTML = progress(); };
   const refreshSec = (id) => {
@@ -209,6 +210,7 @@ function renderRun(app, el, run) {
     const f = e.target.closest('[data-filter]');
     if (f) { app.inspectFilter = f.dataset.filter; return renderRun(app, el, run); }
     const a = e.target.closest('[data-act]')?.dataset.act;
+    if (a === 'csv') return exportInspectionCsv(app.st, run);
     if (a === 'allok') return markSection(app, el, run, runItems, secs, save);
     if (a === 'addtest') return addTest(app, el, run, tests);
     if (a === 'delete' && (await confirmDialog('Delete this inspection? Flags it already created stay on the parts.', 'Delete'))) {

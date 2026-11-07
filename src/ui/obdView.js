@@ -4,6 +4,7 @@ import { BluetoothTransport, WebSerialTransport, WebBleTransport, DemoTransport,
 import { CHANNELS, evaluate } from '../obd/pids.js';
 import { describeDtc, partsForDtc, dtcSeverity } from '../obd/dtc.js';
 import { parseObdCsv, summarize, downsample } from '../obd/csvImport.js';
+import { exportObdSessionCsv } from './csvExport.js';
 import { esc, fmtDate, toast, modal, confirmDialog } from './util.js';
 
 const DEFAULT_PIDS = ['0C', '0D', '05', '0F', '06', '07', '08', '09', '10', '11', '04', '0E', '14', '15', '18', '19', '1F', '42'];
@@ -272,13 +273,14 @@ async function openSession(app, id) {
     <canvas class="chart" width="900" height="260"></canvas>
     <table class="tbl"><tr><th>Channel</th><th>Min</th><th>Avg</th><th>Max</th></tr>${chans.map((c) => { const st = s.stats[c], d = CHANNELS[c].dp; return `<tr><td>${esc(CHANNELS[c].name)}</td><td>${st.min.toFixed(d)}</td><td>${st.avg.toFixed(d)}</td><td>${st.max.toFixed(d)}</td></tr>`; }).join('')}</table>
     ${s.mapping ? `<details class="small"><summary>Column mapping</summary><ul>${Object.entries(s.mapping).map(([h, m]) => `<li>${esc(h)} → ${esc(CHANNELS[m.ch]?.name || m.ch)}</li>`).join('')}</ul>${s.unmatched?.length ? `<p class="muted">Not used: ${esc(s.unmatched.join(', '))}</p>` : ''}</details>` : ''}
-    <div class="row between"><button class="btn danger" data-del>Delete session</button><button class="btn" data-close>Close</button></div>`;
+    <div class="row between"><button class="btn danger" data-del>Delete session</button><span><button class="btn" data-export>Export CSV</button> <button class="btn" data-close>Close</button></span></div>`;
   modal(s.name, html, {
     wide: true,
     onMount: (root, close) => {
       const cv = root.querySelector('canvas'), sel = root.querySelector('[data-ch]');
       const draw = () => drawChart(cv, s.rows, sel.value);
       if (sel) { sel.onchange = draw; draw(); }
+      root.querySelector('[data-export]').onclick = () => exportObdSessionCsv(app.st, s);
       root.querySelector('[data-del]').onclick = async () => { await db.obdSessions.delete(id); close(); app.refresh(); };
       const ap = root.querySelector('[data-apply]');
       if (ap) ap.onclick = async () => {

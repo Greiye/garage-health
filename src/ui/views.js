@@ -7,6 +7,7 @@ import { partRow, chip, dot, thumb, openAttachment } from './partPanel.js';
 import { openServiceForm } from './serviceForm.js';
 import { openRotation } from './rotation.js';
 import { openBaseline } from './baseline.js';
+import { exportServicesCsv } from './csvExport.js';
 
 // ---------- Health tab: what needs attention, then every system ----------
 export function renderHealth(app, el) {
@@ -62,7 +63,7 @@ export async function renderLog(app, el) {
   const total = Object.values(byYear).reduce((a, b) => a + b, 0);
 
   el.innerHTML = `
-    <div class="actions"><button class="btn primary" data-act="log">Log service</button><input type="search" class="grow" placeholder="Search log…" value="${esc(app.logQuery || '')}" data-q></div>
+    <div class="actions"><button class="btn primary" data-act="log">Log service</button><button class="btn" data-act="csv">Export CSV</button><input type="search" class="grow" placeholder="Search log…" value="${esc(app.logQuery || '')}" data-q></div>
     ${total ? `<div class="spend"><span>Total spent <b>${fmtMoney(total)}</b></span>${Object.entries(byYear).sort().reverse().slice(0, 5).map(([y, v]) => `<span>${y}: ${fmtMoney(v)}</span>`).join('')}</div>` : ''}
     ${shown.length ? `<ul class="timeline">${shown.map((s) => `<li data-service="${s.id}">
       <div class="t-date">${fmtDate(s.date)}<br><span class="muted small">${fmtMi(s.miles)}</span></div>
@@ -86,5 +87,6 @@ export async function renderLog(app, el) {
       return app.refresh();
     }
     if (t.dataset.act === 'log') openServiceForm(app);
+    if (t.dataset.act === 'csv') exportServicesCsv(st);
   };
 }

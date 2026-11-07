@@ -61,7 +61,22 @@ export function blobURL(att) {
   return urlCache.get(att.id);
 }
 
-export function download(blob, name) {
+// Browsers: normal download. Android app: WebView can't save blob downloads, so
+// write to the cache and open the share sheet (Save to Files / Drive / email).
+export async function download(blob, name) {
+  if (window.Capacitor?.isNativePlatform?.()) {
+    try {
+      const [{ Filesystem, Directory }, { Share }] = await Promise.all([import('@capacitor/filesystem'), import('@capacitor/share')]);
+      const data = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = rej; r.readAsDataURL(blob); });
+      const { uri } = await Filesystem.writeFile({ path: name, data, directory: Directory.Cache });
+      await Share.share({ title: name, url: uri, dialogTitle: `Save ${name}` });
+      return;
+    } catch (e) {
+      if (/cancel/i.test(e?.message || '')) return;
+      toast(`Could not export: ${e.message || e}`, 5000);
+      return;
+    }
+  }
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = name;
