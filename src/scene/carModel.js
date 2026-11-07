@@ -254,6 +254,7 @@ export function buildVehicle(opts, bodyColor = '#b0181f') {
   put('brakeMaster', 'Brake master cylinder', rotGeo(cyl(0.05, 0.05, 0.18), [0, 0, Math.PI / 2]), [fw + 0.05, d.ride + 0.72, d.W * 0.28]);
   put('brakeMaster', 'Brake master cylinder', cyl(0.13, 0.13, 0.06), [fw - 0.05, d.ride + 0.72, d.W * 0.28], [0, 0, Math.PI / 2]);
   if (opts.cabinFilter) put('cabin', 'Cabin filter', box(0.04, 0.18, 0.24), [fw - 0.12, d.ride + 0.62, -d.W * 0.2]);
+  put('interior', 'Cabin & body', box(0.1, 0.12, d.W * 0.55), [fw - 0.35, d.ride + 0.55, 0]);
   put('wipers', 'Wipers', box(0.03, 0.02, d.W * 0.7), [fw - 0.06, d.H * 0.6 + 0.08, 0], [0, 0.2, 0]);
   put('headlights', 'Headlights', box(0.06, 0.08, 0.3), [d.L / 2 - 0.05, d.H * 0.6 - 0.08, d.W * 0.33]);
   put('headlights', 'Headlights', box(0.06, 0.08, 0.3), [d.L / 2 - 0.05, d.H * 0.6 - 0.08, -d.W * 0.33]);

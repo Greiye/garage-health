@@ -7,11 +7,13 @@ import { renderHealth, renderLog } from './ui/views.js';
 import { renderPart, renderSlot } from './ui/partPanel.js';
 import { renderObd } from './ui/obdView.js';
 import { renderSpecs } from './ui/specsView.js';
+import { renderInspect } from './ui/inspectView.js';
 import { renderGarage, openOdometer, openVehicleWizard } from './ui/garageView.js';
 import { esc, fmtMi, $ } from './ui/util.js';
 
 const TABS = [
   ['health', 'Health', '◉'],
+  ['inspect', 'Inspect', '✓'],
   ['log', 'Log', '☰'],
   ['obd', 'OBD', '⚡'],
   ['specs', 'Specs', '⚙'],
@@ -79,9 +81,11 @@ const app = {
     const el = $('#panel-body');
     el.className = `panel-body ${this.tab}-view`;
     el.onclick = null;
+    el.oninput = null;
     switch (this.tab) {
       case 'part': return renderPart(this, el, this.partId);
       case 'slot': return renderSlot(this, el, this.slot);
+      case 'inspect': return renderInspect(this, el);
       case 'log': return renderLog(this, el);
       case 'obd': return renderObd(this, el);
       case 'specs': return renderSpecs(this, el);

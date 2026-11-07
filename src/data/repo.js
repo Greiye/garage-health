@@ -1,6 +1,9 @@
 import { db, todayISO, getSetting, setSetting } from './db.js';
 import { buildPartList, PRESETS } from './templates.js';
 import { partHealth, worstLevel } from './health.js';
+import { buildInspection, buildTests, summarizeRun } from './inspection.js';
+import { buildCatalog, mergeCatalog } from './catalog.js';
+import { VEHICLE_CATALOGS } from './catalogs/index.js';
 
 // Virtual slots light several meshes at once.
 export const VIRTUAL_SLOTS = { tires: ['tire_FL', 'tire_FR', 'tire_RL', 'tire_RR'] };
@@ -17,6 +20,7 @@ export async function createVehicle({ presetId, name, vehicle = {}, options, odo
     odometer: odometer ?? null,
     odometerDate: odometerDate || todayISO(),
     specs: (preset.specs || []).map(([group, label, value, verify]) => ({ group, label, value, verify: !!verify })),
+    specsVersion: SPECS_VERSION,
     createdAt: new Date().toISOString(),
   };
   const id = await db.vehicles.add(v);
@@ -60,12 +64,14 @@ export async function setOdometer(vehicleId, miles, date = todayISO(), source = 
 
 // Loads everything needed to render a vehicle and computes health.
 export async function loadVehicleState(vehicleId) {
-  const [vehicle, parts, components, services, flags] = await Promise.all([
+  await syncParts(vehicleId);
+  const [vehicle, parts, components, services, flags, inspections] = await Promise.all([
     db.vehicles.get(vehicleId),
     db.parts.where({ vehicleId }).toArray(),
     db.components.where({ vehicleId }).toArray(),
     db.services.where({ vehicleId }).toArray(),
     db.flags.where({ vehicleId }).filter((f) => f.active).toArray(),
+    db.inspections.where({ vehicleId }).toArray(),
   ]);
   const visible = parts.filter((p) => !p.hidden);
   const component = new Map();
@@ -83,7 +89,13 @@ export async function loadVehicleState(vehicleId) {
     if (!flagMap.has(f.partId)) flagMap.set(f.partId, []);
     flagMap.get(f.partId).push(f);
   }
-  const ctx = { odometer: vehicle.odometer, today: todayISO(), lastService, component, flags: flagMap };
+  // Latest inspection pass per part (date), from completed runs
+  const inspected = new Map();
+  for (const r of inspections) {
+    if (r.status !== 'done') continue;
+    for (const pid of r.passedParts || []) if (!inspected.has(pid) || inspected.get(pid) < r.date) inspected.set(pid, r.date);
+  }
+  const ctx = { odometer: vehicle.odometer, today: todayISO(), lastService, component, flags: flagMap, inspected };
   const health = new Map();
   for (const p of visible) health.set(p.id, partHealth(p, ctx));
 
@@ -105,7 +117,7 @@ export async function loadVehicleState(vehicleId) {
     const levels = ps.map((p) => health.get(p.id).level);
     slotHealth.set(s, { level: worstLevel(levels), blink: ps.some((p) => health.get(p.id).blink), parts: ps });
   }
-  return { vehicle, parts: visible, allParts: parts, components, services, flags, component, lastService, health, slotHealth };
+  return { vehicle, parts: visible, allParts: parts, components, services, flags, component, lastService, health, slotHealth, inspections };
 }
 
 export async function addFlag({ vehicleId, partId, source = 'user', severity = 'warn', text, code }) {
@@ -187,4 +199,114 @@ export async function ensureComponent(vehicleId, partId) {
     c = await db.components.get(id);
   }
   return c;
+}
+
+// Adds parts introduced by newer app versions to existing vehicles.
+async function syncParts(vehicleId) {
+  const v = await db.vehicles.get(vehicleId);
+  if (!v) return;
+  const existing = await db.parts.where({ vehicleId }).toArray();
+  const have = new Set(existing.map((p) => p.key));
+  const preset = PRESETS.find((p) => p.id === v.presetId);
+  const missing = buildPartList(v.options).filter((d) => !have.has(d.key));
+  if (missing.length) await db.parts.bulkAdd(missing.map((d) => ({ ...d, vehicleId, notes: preset?.partNotes?.[d.key] || '' })));
+  // Spec sheet updates: rows still marked "verify" (not confirmed by the
+  // user) take the preset's newer value; new preset rows are added.
+  if (preset?.specs && (v.specsVersion || 1) < SPECS_VERSION) {
+    const labels = new Set(preset.specs.map((x) => x[1]));
+    // Unconfirmed rows the preset no longer has were old defaults: drop them.
+    const specs = (v.specs || []).filter((x) => !x.verify || labels.has(x.label));
+    for (const [group, label, value, verify] of preset.specs) {
+      const i = specs.findIndex((x) => x.label === label);
+      if (i < 0) specs.push({ group, label, value, verify: !!verify });
+      else if (specs[i].verify) specs[i] = { group, label, value, verify: !!verify };
+    }
+    await db.vehicles.update(vehicleId, { specs, specsVersion: SPECS_VERSION });
+  }
+}
+const SPECS_VERSION = 2;
+
+// ---------- Catalog ----------
+export function vehicleCatalog(vehicle) {
+  return mergeCatalog(buildCatalog(vehicle.options), VEHICLE_CATALOGS[vehicle.presetId], vehicle.catalogUser);
+}
+
+export async function saveCatalogItem(vehicleId, id, patch) {
+  const v = await db.vehicles.get(vehicleId);
+  const user = { ...(v.catalogUser || {}) };
+  user[id] = patch == null ? undefined : { ...(user[id] || {}), ...patch };
+  if (patch == null) delete user[id];
+  await db.vehicles.update(vehicleId, { catalogUser: user });
+}
+
+// ---------- Inspections ----------
+export function inspectionDefs(vehicle) {
+  const vc = VEHICLE_CATALOGS[vehicle.presetId];
+  const tests = buildTests(vehicle.options).map((t) => {
+    const ov = vc?.testSpecs?.[t.id];
+    if (!ov) return t;
+    return { ...t, ...(ov.criteria ? { criteria: ov.criteria } : {}), readings: t.readings.map((r) => ({ ...r, ...(ov.readings?.[r.id] || {}) })) };
+  });
+  return { items: buildInspection(vehicle.options), tests };
+}
+
+export async function startInspection(vehicle, { kind = 'full', testIds = [], title } = {}) {
+  return db.inspections.add({
+    vehicleId: vehicle.id, kind, title: title || (kind === 'full' ? 'Full inspection' : 'Tests'),
+    date: todayISO(), miles: vehicle.odometer ?? null, status: 'draft',
+    results: {}, tests: Object.fromEntries(testIds.map((id) => [id, { values: {} }])),
+    createdAt: new Date().toISOString(),
+  });
+}
+
+export const saveInspectionDraft = (id, patch) => db.inspections.update(id, { ...patch, updatedAt: new Date().toISOString() });
+
+export async function deleteInspection(id) {
+  await db.inspections.delete(id);
+}
+
+const SEV = { watch: 'watch', fail: 'warn' };
+
+// Completes a run: fails and watches become flags on the mapped parts (so the
+// 3D model turns yellow/red), passes clear earlier flags from the same check,
+// and measurements go into each part's measurement history.
+export async function completeInspection(id) {
+  const run = await db.inspections.get(id);
+  const vehicle = await db.vehicles.get(run.vehicleId);
+  const { items, tests } = inspectionDefs(vehicle);
+  const { findings, measures } = summarizeRun(run, items, tests);
+  const parts = await db.parts.where({ vehicleId: vehicle.id }).toArray();
+  const byKey = new Map(parts.filter((p) => !p.hidden).map((p) => [p.key, p]));
+  const passed = new Set();
+  const failedParts = new Set();
+  let flagged = 0;
+  for (const f of findings) {
+    const ps = f.parts.map((k) => byKey.get(k)).filter(Boolean);
+    if (f.status === 'pass') {
+      for (const p of ps) {
+        passed.add(p.id);
+        const old = await db.flags.where({ vehicleId: vehicle.id, partId: p.id }).filter((x) => x.active && x.code === f.key).toArray();
+        for (const o of old) await resolveFlag(o.id);
+      }
+      continue;
+    }
+    // Checklist items flag every mapped part ("one of these"). A test flags
+    // its primary part; a test rule that names parts flags those.
+    const targets = f.key.startsWith('test:') && f.key.split(':').length === 2 ? ps.slice(0, 1) : ps;
+    for (const p of targets) {
+      failedParts.add(p.id);
+      await addFlag({ vehicleId: vehicle.id, partId: p.id, source: 'inspection', severity: f.status === 'fail' && f.crit ? 'critical' : SEV[f.status], text: f.text, code: f.key });
+      flagged++;
+    }
+  }
+  for (const m of measures) {
+    const p = byKey.get(m.part);
+    if (!p || !p.measure) continue;
+    const c = await ensureComponent(vehicle.id, p.id);
+    await addMeasurement(c.id, { date: run.date, miles: run.miles, value: m.value, note: `Inspection: ${m.label}` });
+  }
+  const passedParts = [...passed].filter((pid) => !failedParts.has(pid));
+  await db.inspections.update(id, { status: 'done', completedAt: new Date().toISOString(), passedParts, summary: { findings: findings.length, flagged, measures: measures.length } });
+  if (run.miles != null) await setOdometer(vehicle.id, run.miles, run.date, 'inspection');
+  return { flagged, measures: measures.length, passed: passedParts.length };
 }

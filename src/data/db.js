@@ -27,6 +27,11 @@ db.version(1).stores({
   settings: 'key',
 });
 
+// v2: inspections (150+ point checklist runs and test battery results)
+db.version(2).stores({
+  inspections: '++id, vehicleId, date, status',
+});
+
 export async function getSetting(key, fallback = null) {
   const row = await db.settings.get(key);
   return row ? row.value : fallback;
