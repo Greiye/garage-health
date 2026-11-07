@@ -8,6 +8,7 @@ import android.bluetooth.BluetoothManager;
 import android.bluetooth.BluetoothSocket;
 import android.content.Context;
 import android.os.Build;
+import android.view.WindowManager;
 
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
@@ -182,6 +183,17 @@ public class ObdSerialPlugin extends Plugin {
         } catch (IOException e) {
             call.reject("Write failed: " + e.getMessage());
         }
+    }
+
+    /** Keep the screen on while the live dashboard is open. */
+    @PluginMethod
+    public void keepAwake(PluginCall call) {
+        final boolean on = Boolean.TRUE.equals(call.getBoolean("on", false));
+        getActivity().runOnUiThread(() -> {
+            if (on) getActivity().getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            else getActivity().getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            call.resolve();
+        });
     }
 
     @PluginMethod

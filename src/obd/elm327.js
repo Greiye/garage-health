@@ -72,6 +72,17 @@ export class BluetoothTransport {
   }
 }
 
+// Keep the screen on (dashboard mode). Uses the Wake Lock API where it exists,
+// and the native window flag in the Android app.
+let wakeLock = null;
+export async function setKeepAwake(on) {
+  try {
+    if (on && 'wakeLock' in navigator) { wakeLock = await navigator.wakeLock.request('screen'); return; }
+    if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; return; }
+  } catch {}
+  if (BluetoothTransport.available()) { try { await ObdSerial.keepAwake({ on }); } catch {} }
+}
+
 // Accepts 11:33:77:54:00:34, 11-33-77-54-00-34, 113377540034 (any case).
 export function normalizeMac(s) {
   const hex = String(s || '').replace(/[^0-9a-f]/gi, '').toUpperCase();
@@ -289,17 +300,24 @@ export class Elm327 {
 // Poll loop: reads the chosen PIDs (that the car supports) plus adapter
 // voltage, and emits one sample object per pass.
 export class Poller {
-  constructor(elm, pids, onSample) {
+  // rateMs: minimum time per full cycle (0 = as fast as the adapter answers).
+  constructor(elm, pids, onSample, { rateMs = 0 } = {}) {
     this.elm = elm;
-    this.pids = pids.filter((p) => elm.supported.has(p));
     this.onSample = onSample;
+    this.rateMs = rateMs;
     this.running = false;
+    this.hz = 0;
+    this.setPids(pids);
   }
+  setPids(pids) { this.pids = [...new Set(pids)].filter((p) => this.elm.supported.has(p)); }
+  setRate(ms) { this.rateMs = ms; this.wake?.(); }
+  sleep(ms) { return new Promise((r) => { const t = setTimeout(r, ms); this.wake = () => { clearTimeout(t); r(); }; }); }
   async start() {
     this.running = true;
     let n = 0;
     while (this.running) {
-      const sample = { t: Date.now() };
+      const t0 = Date.now();
+      const sample = { t: t0 };
       for (const pid of this.pids) {
         if (!this.running) break;
         try {
@@ -311,7 +329,11 @@ export class Poller {
         try { const v = await this.elm.readVoltage(); if (v != null) sample.voltage = v; } catch {}
       }
       this.onSample(sample);
+      const left = this.rateMs - (Date.now() - t0);
+      if (left > 0 && this.running) await this.sleep(left);
+      const dt = Date.now() - t0;
+      this.hz = dt ? 1000 / dt : 0;
     }
   }
-  stop() { this.running = false; }
+  stop() { this.running = false; this.wake?.(); }
 }

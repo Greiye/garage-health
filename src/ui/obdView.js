@@ -1,14 +1,28 @@
 import { db, getSetting, setSetting } from '../data/db.js';
 import { addFlag } from '../data/repo.js';
-import { BluetoothTransport, normalizeMac, WebSerialTransport, WebBleTransport, DemoTransport, Elm327, Poller } from '../obd/elm327.js';
-import { CHANNELS, evaluate } from '../obd/pids.js';
+import { BluetoothTransport, normalizeMac, setKeepAwake, WebSerialTransport, WebBleTransport, DemoTransport, Elm327, Poller } from '../obd/elm327.js';
+import { CHANNELS, PIDS, evaluate } from '../obd/pids.js';
 import { describeDtc, partsForDtc, dtcSeverity } from '../obd/dtc.js';
 import { parseObdCsv, summarize, downsample } from '../obd/csvImport.js';
 import { exportObdSessionCsv } from './csvExport.js';
 import { esc, fmtDate, toast, modal, confirmDialog } from './util.js';
 
-const DEFAULT_PIDS = ['0C', '0D', '05', '0F', '06', '07', '08', '09', '10', '11', '04', '0E', '14', '15', '18', '19', '1F', '42'];
 const GAUGES = ['rpm', 'speed', 'coolant', 'voltage', 'ltft1', 'ltft2', 'stft1', 'stft2', 'iat', 'maf', 'throttle', 'load', 'timing', 'o2_b1s1', 'o2_b2s1', 'o2_b1s2', 'o2_b2s2'];
+
+// Dashboard config per vehicle: which gauges to show (and poll) and how often.
+const RATES = [[0, 'Fastest'], [250, '4× / s'], [500, '2× / s'], [1000, '1× / s'], [2000, 'Every 2 s'], [5000, 'Every 5 s']];
+const CH_PID = Object.fromEntries(Object.entries(PIDS).map(([pid, d]) => [d.ch, pid]));
+const ALWAYS_PIDS = ['0C', '05', '1F']; // rpm, coolant, run time: needed to know running / warmed-up state
+const PICKABLE = Object.keys(CHANNELS).filter((ch) => CH_PID[ch] || ch === 'voltage');
+async function dashConfig(vehicleId) {
+  return { gauges: GAUGES, rateMs: 0, ...(await getSetting(`obdDash:${vehicleId}`, {})) };
+}
+async function saveDashConfig(vehicleId, cfg) {
+  live.cfg = cfg;
+  await setSetting(`obdDash:${vehicleId}`, { gauges: cfg.gauges, rateMs: cfg.rateMs });
+  if (live.poller) { live.poller.setPids(pidsFor(cfg)); live.poller.setRate(cfg.rateMs); }
+}
+const pidsFor = (cfg) => [...ALWAYS_PIDS, ...cfg.gauges.filter((ch) => ch !== 'voltage').map((ch) => CH_PID[ch]).filter(Boolean)];
 
 // Connection state survives tab switches.
 const live = { autoTried: new Set(), elm: null, transport: null, poller: null, sample: {}, recording: null, status: 'disconnected', info: null, log: [], alerts: new Map() };
@@ -17,6 +31,7 @@ export async function renderObd(app, el) {
   const native = BluetoothTransport.available();
   const serial = !native && WebSerialTransport.available();
   const saved = native ? await savedAdapter(app.st.vehicle.id) : null;
+  live.cfg = await dashConfig(app.st.vehicle.id);
   const sessions = await db.obdSessions.where({ vehicleId: app.st.vehicle.id }).reverse().sortBy('date');
   const dtcs = await db.dtcs.where({ vehicleId: app.st.vehicle.id }).toArray();
   const activeDtcs = dtcs.filter((d) => d.active);
@@ -39,7 +54,13 @@ export async function renderObd(app, el) {
     ${native && saved ? `<div class="row small saved-adapter"><span class="grow">Saved for this vehicle: <b>${esc(saved.name || 'Adapter')}</b> <span class="muted">${esc(saved.address)}</span></span><label class="tgl"><input type="checkbox" data-auto ${saved.auto !== false ? 'checked' : ''}> Auto-connect</label><button class="btn small" data-act="forget">Forget</button></div>` : ''}
     ${native && !saved && live.status !== 'connected' ? '<p class="muted small">Pair the adapter in Android Settings → Connected devices first (PIN is usually 1234 or 0000), then tap Paired adapters. The app remembers it for this vehicle and reconnects on its own.</p>' : ''}
     <div class="devices"></div>
-    <div class="gauges">${GAUGES.map((ch) => gauge(ch)).join('')}</div>
+    <div class="row dash-tools small">
+      <button class="btn small" data-act="fullscreen">⛶ Full screen</button>
+      <button class="btn small" data-act="gauges">Choose gauges (${live.cfg.gauges.length})</button>
+      <label>Update <select data-rate>${RATES.map(([ms, l]) => `<option value="${ms}" ${ms === live.cfg.rateMs ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      <span class="muted" data-hz>${live.poller?.hz ? live.poller.hz.toFixed(1) + ' updates/s' : ''}</span>
+    </div>
+    <div class="gauges">${live.cfg.gauges.map((ch) => gauge(ch)).join('')}</div>
     ${live.alerts.size ? `<ul class="list alerts">${[...live.alerts.values()].map((a) => `<li class="row-item"><span class="dot lv-${a.sev === 'critical' ? 'red' : a.sev === 'warn' ? 'orange' : 'yellow'}"></span>${esc(a.text)}</li>`).join('')}</ul>` : ''}
     <details class="small"><summary>Adapter log</summary><pre class="log">${esc(live.log.slice(-60).join('\n'))}</pre></details>
   </section>
@@ -63,6 +84,7 @@ export async function renderObd(app, el) {
   </section>`;
 
   el.onclick = (e) => onClick(app, el, e);
+  el.querySelector('[data-rate]').onchange = (e) => saveDashConfig(app.st.vehicle.id, { ...live.cfg, rateMs: +e.target.value });
   const auto = el.querySelector('[data-auto]');
   if (auto) auto.onchange = () => saveAdapter(app.st.vehicle.id, { ...saved, auto: auto.checked });
   // Native auto-connect: once per app launch per vehicle, like OBD Fusion.
@@ -90,13 +112,15 @@ function gauge(ch) {
 }
 
 function updateGauges(el) {
-  for (const g of el.querySelectorAll('[data-g]')) {
+  const hz = live.poller?.hz ? live.poller.hz.toFixed(1) + ' updates/s' : '';
+  for (const h of document.querySelectorAll('[data-hz]')) h.textContent = hz;
+  for (const g of document.querySelectorAll('.obd-fs [data-g]' + (el ? ', #panel .obd-view [data-g]' : ''))) {
     const ch = g.dataset.g;
     const v = live.sample[ch];
     g.querySelector('.g-val').textContent = v == null ? '—' : v.toFixed(CHANNELS[ch].dp);
     g.className = `gauge ${live.alertsByCh?.[ch] ? 'g-' + live.alertsByCh[ch] : ''}`;
   }
-  const rec = el.querySelector('[data-act=record]');
+  const rec = el?.querySelector('[data-act=record]');
   if (rec && live.recording) rec.textContent = `Stop recording (${live.recording.rows.length})`;
 }
 
@@ -145,6 +169,8 @@ async function onClick(app, el, e) {
     if (act === 'ble') return connect(app, el, new WebBleTransport(), null);
     if (act === 'serial') return connect(app, el, new WebSerialTransport(), +(el.querySelector('[data-baud]')?.value || 38400));
     if (act === 'disconnect') return disconnect(app, el);
+    if (act === 'fullscreen') return openFullscreen(app);
+    if (act === 'gauges') return chooseGauges(app, el);
     if (act === 'record') {
       if (live.recording) {
         const r = live.recording;
@@ -211,7 +237,7 @@ async function connect(app, el, transport, address, name) {
     live.info = await live.elm.init();
     live.status = 'connected';
     live.alerts = new Map();
-    live.poller = new Poller(live.elm, DEFAULT_PIDS, (s) => onSample(app, s));
+    live.poller = new Poller(live.elm, pidsFor(live.cfg || await dashConfig(app.st.vehicle.id)), (s) => onSample(app, s), { rateMs: live.cfg?.rateMs || 0 });
     live.poller.start();
     // Read codes once on connect
     const { stored, pending } = await live.elm.readDtcs().catch(() => ({ stored: [], pending: [] }));
@@ -248,7 +274,8 @@ async function onSample(app, s) {
     live.alertsByCh[h.code.split(':')[1]] = h.sev;
   }
   const el = document.querySelector('#panel .obd-view');
-  if (el) updateGauges(el);
+  if (el || document.querySelector('.obd-fs')) updateGauges(el);
+  updateFsAlerts();
   // Persist live alerts to parts at most every 5 s.
   if (hits.length && Date.now() - lastFlagWrite > 5000) {
     lastFlagWrite = Date.now();
@@ -362,4 +389,64 @@ function drawChart(cv, rows, ch) {
   ctx.beginPath();
   pts.forEach((r, i) => (i ? ctx.lineTo(X(r.t), Y(r[ch])) : ctx.moveTo(X(r.t), Y(r[ch]))));
   ctx.stroke();
+}
+
+// ---------- Gauge picker ----------
+function chooseGauges(app, el) {
+  const sup = live.info ? new Set(live.info.supported) : null;
+  const on = new Set(live.cfg.gauges);
+  const rows = PICKABLE.map((ch) => {
+    const pid = ch === 'voltage' ? null : CH_PID[ch];
+    const unsupported = sup && pid && !sup.has(pid);
+    return `<label class="pick ${unsupported ? 'muted' : ''}"><input type="checkbox" name="g" value="${ch}" ${on.has(ch) ? 'checked' : ''}> ${esc(CHANNELS[ch].name)} <span class="muted small">${esc(CHANNELS[ch].unit)}${pid ? ` · PID ${pid}` : ' · adapter'}${unsupported ? ' · not supported by this car' : ''}</span></label>`;
+  }).join('');
+  modal('Choose gauges', `<form class="form"><p class="muted small">Only the gauges you pick are polled, so fewer gauges means faster updates. RPM and coolant are always read in the background for the health checks.${sup ? '' : ' Connect to see which PIDs this car supports.'}</p><div class="pick-list">${rows}</div><div class="row end"><button class="btn" type="button" data-all>All</button><button class="btn" type="button" data-none>None</button><button class="btn primary" type="submit">Save</button></div></form>`, {
+    onMount: (w) => {
+      w.querySelector('[data-all]').onclick = () => w.querySelectorAll('[name=g]').forEach((c) => { c.checked = true; });
+      w.querySelector('[data-none]').onclick = () => w.querySelectorAll('[name=g]').forEach((c) => { c.checked = false; });
+    },
+    onSubmit: async (fd) => {
+      const picked = new Set(fd.getAll('g'));
+      // Keep display order stable (the CHANNELS order).
+      await saveDashConfig(app.st.vehicle.id, { ...live.cfg, gauges: PICKABLE.filter((ch) => picked.has(ch)) });
+      renderObd(app, el);
+    },
+  });
+}
+
+// ---------- Full-screen dashboard ----------
+async function openFullscreen(app) {
+  document.querySelector('.obd-fs')?.remove();
+  const fs = document.createElement('div');
+  fs.className = 'obd-fs';
+  fs.innerHTML = `
+    <div class="fs-bar"><b>${esc(app.st.vehicle.name)}</b><span class="status st-${live.status}">${esc(live.status)}</span><span class="muted small" data-hz></span><span class="grow"></span>
+      <select data-rate>${RATES.map(([ms, l]) => `<option value="${ms}" ${ms === live.cfg.rateMs ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      <button class="btn small" data-exit>✕ Exit</button></div>
+    <div class="fs-gauges">${live.cfg.gauges.map((ch) => gauge(ch)).join('')}</div>
+    <ul class="fs-alerts"></ul>`;
+  document.body.appendChild(fs);
+  fs.querySelector('[data-rate]').onchange = (e) => saveDashConfig(app.st.vehicle.id, { ...live.cfg, rateMs: +e.target.value });
+  const exit = async () => {
+    fs.remove();
+    document.removeEventListener('keydown', onKey);
+    await setKeepAwake(false);
+    try { screen.orientation?.unlock?.(); } catch {}
+    if (document.fullscreenElement) { try { await document.exitFullscreen(); } catch {} }
+  };
+  const onKey = (e) => { if (e.key === 'Escape') exit(); };
+  document.addEventListener('keydown', onKey);
+  fs.querySelector('[data-exit]').onclick = exit;
+  fs.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && document.body.contains(fs)) exit(); });
+  try { await fs.requestFullscreen?.({ navigationUI: 'hide' }); } catch {}
+  try { await screen.orientation?.lock?.('landscape'); } catch {}
+  await setKeepAwake(true);
+  updateGauges(null);
+  updateFsAlerts();
+}
+
+function updateFsAlerts() {
+  const ul = document.querySelector('.obd-fs .fs-alerts');
+  if (!ul) return;
+  ul.innerHTML = [...live.alerts.values()].slice(-4).map((a) => `<li><span class="dot lv-${a.sev === 'critical' ? 'red blink' : a.sev === 'warn' ? 'orange' : 'yellow'}"></span>${esc(a.text)}</li>`).join('');
 }
