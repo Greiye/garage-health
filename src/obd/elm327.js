@@ -76,6 +76,55 @@ export class BluetoothTransport {
   }
 }
 
+// PC (Chrome/Edge): Web Serial. Works with USB ELM327 adapters, and with
+// Bluetooth Classic adapters once paired in Windows (they appear as a COM port).
+export class WebSerialTransport {
+  static available() { return typeof navigator !== 'undefined' && 'serial' in navigator; }
+  async connect(baudRate = 38400) {
+    this.port = await navigator.serial.requestPort();
+    await this.port.open({ baudRate });
+    this.address = 'serial';
+    this.buffer = '';
+    this.reader = this.port.readable.getReader();
+    this.writer = this.port.writable.getWriter();
+    const dec = new TextDecoder();
+    (async () => {
+      try {
+        while (true) {
+          const { value, done } = await this.reader.read();
+          if (done) break;
+          this.onData(dec.decode(value));
+        }
+      } catch {}
+    })();
+  }
+  onData(chunk) {
+    this.buffer += chunk;
+    if (this.buffer.includes('>') && this.waiter) {
+      const out = this.buffer.slice(0, this.buffer.lastIndexOf('>'));
+      this.buffer = '';
+      const w = this.waiter;
+      this.waiter = null;
+      w.resolve(out);
+    }
+  }
+  async send(cmd, timeout = 4000) {
+    this.buffer = '';
+    const done = new Promise((resolve, reject) => {
+      this.waiter = { resolve };
+      setTimeout(() => { if (this.waiter?.resolve === resolve) { this.waiter = null; reject(new Error(`Timeout on ${cmd}`)); } }, timeout);
+    });
+    await this.writer.write(new TextEncoder().encode(cmd + '\r'));
+    return done;
+  }
+  async disconnect() {
+    try { await this.reader?.cancel(); this.reader?.releaseLock(); } catch {}
+    try { this.writer?.releaseLock(); } catch {}
+    try { await this.port?.close(); } catch {}
+    this.address = null;
+  }
+}
+
 // Browser demo: a simulated 2001-era Ford PCM on J1850 PWM so the whole OBD
 // screen can be tried on a PC without an adapter.
 export class DemoTransport {

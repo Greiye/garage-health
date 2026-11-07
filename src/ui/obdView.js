@@ -1,6 +1,6 @@
 import { db, getSetting, setSetting } from '../data/db.js';
 import { addFlag } from '../data/repo.js';
-import { BluetoothTransport, DemoTransport, Elm327, Poller } from '../obd/elm327.js';
+import { BluetoothTransport, WebSerialTransport, DemoTransport, Elm327, Poller } from '../obd/elm327.js';
 import { CHANNELS, evaluate } from '../obd/pids.js';
 import { describeDtc, partsForDtc, dtcSeverity } from '../obd/dtc.js';
 import { parseObdCsv, summarize, downsample } from '../obd/csvImport.js';
@@ -14,6 +14,7 @@ const live = { elm: null, transport: null, poller: null, sample: {}, recording: 
 
 export async function renderObd(app, el) {
   const native = BluetoothTransport.available();
+  const serial = !native && WebSerialTransport.available();
   const lastAddr = await getSetting('obdAddress');
   const sessions = await db.obdSessions.where({ vehicleId: app.st.vehicle.id }).reverse().sortBy('date');
   const dtcs = await db.dtcs.where({ vehicleId: app.st.vehicle.id }).toArray();
@@ -22,7 +23,7 @@ export async function renderObd(app, el) {
   el.innerHTML = `
   <section class="card">
     <div class="sec-head"><h3>Live connection</h3><span class="status st-${live.status}">${esc(live.status)}</span></div>
-    ${native ? '' : '<p class="muted small">Bluetooth Classic adapters need the Android app. In the browser you can try the simulated adapter.</p>'}
+    ${native ? '' : serial ? '<p class="muted small">PC: pair the Bluetooth adapter in Windows Settings first (it becomes a COM port), or plug in a USB adapter. Then pick its port. Bluetooth adapters usually show as "Standard Serial over Bluetooth link"; if two appear, try the first (outgoing) one.</p>' : '<p class="muted small">This browser can\'t reach serial adapters. Use Chrome or Edge on PC, or the Android app. You can still try the simulated adapter.</p>'}
     ${live.info ? `<p class="small muted">${esc(live.info.version)} · ${esc(live.info.protocol)} · ${live.info.supported.length} PIDs supported</p>` : ''}
     <div class="actions">
       ${live.status === 'connected' ? `
@@ -30,7 +31,8 @@ export async function renderObd(app, el) {
         <button class="btn ${live.recording ? 'danger' : 'primary'}" data-act="record">${live.recording ? `Stop recording (${live.recording.rows.length})` : 'Record session'}</button>
         <button class="btn" data-act="readdtc">Read codes</button>`
       : `${native ? `<button class="btn primary" data-act="scan">Find adapter</button>${lastAddr ? `<button class="btn" data-act="reconnect">Reconnect ${esc(lastAddr)}</button>` : ''}<button class="btn" data-act="manual">Enter MAC</button>` : ''}
-        <button class="btn ${native ? '' : 'primary'}" data-act="demo">Demo adapter</button>`}
+        ${serial ? '<button class="btn primary" data-act="serial">Connect adapter (COM/USB)</button><select data-baud title="USB adapters: try 38400, then 115200 or 9600"><option>38400</option><option>115200</option><option>9600</option></select>' : ''}
+        <button class="btn ${native || serial ? '' : 'primary'}" data-act="demo">Demo adapter</button>`}
     </div>
     <div class="devices"></div>
     <div class="gauges">${GAUGES.map((ch) => gauge(ch)).join('')}</div>
@@ -114,6 +116,7 @@ async function onClick(app, el, e) {
       });
     }
     if (act === 'demo') return connect(app, el, new DemoTransport(), 'DEMO');
+    if (act === 'serial') return connect(app, el, new WebSerialTransport(), +(el.querySelector('[data-baud]')?.value || 38400));
     if (act === 'disconnect') return disconnect(app, el);
     if (act === 'record') {
       if (live.recording) {
@@ -157,7 +160,7 @@ async function connect(app, el, transport, address) {
   renderObd(app, el);
   try {
     await transport.connect(address);
-    if (!(transport instanceof DemoTransport)) await setSetting('obdAddress', address);
+    if (transport instanceof BluetoothTransport) await setSetting('obdAddress', address);
     live.transport = transport;
     live.elm = new Elm327(transport, (l) => live.log.push(l));
     live.info = await live.elm.init();

@@ -15,12 +15,25 @@ Vehicle maintenance tracker with a 3D health map. It's built for any vehicle, an
 - **Specs** sheet per vehicle: fluids, capacities, torque values and part numbers. The Mustang values are marked "verify".
 - **Garage**: multiple vehicles built from templates, configuration options that decide which parts exist, custom parts, odometer history, and a full JSON backup including photos.
 
-## Run on PC (browser)
+## Run locally (development)
 
 ```bash
 npm install
 npm run dev        # http://localhost:5173 (also reachable from your phone on the same Wi-Fi)
 ```
+
+## PC app (GitHub Pages)
+
+`.github/workflows/pages.yml` publishes the web build on every push to `main` at
+**https://greiye.github.io/garage-health/**. Open it in Chrome or Edge and click the install icon in the address bar to run it as a desktop app (it works offline too).
+
+One-time setup: go to repo **Settings → Pages → Build and deployment → Source: GitHub Actions**.
+
+**Live OBD on PC** (Chrome or Edge, using Web Serial):
+- **Bluetooth ELM327:** pair it in Windows **Settings → Bluetooth & devices** (PIN 1234 or 0000). Windows then creates a COM port. In the app, go to **OBD → Connect adapter (COM/USB)** and pick "Standard Serial over Bluetooth link". If two show up, the outgoing one is usually the lower number.
+- **USB ELM327:** plug it in and pick its port. If it doesn't respond, try a different baud rate (38400, then 115200 or 9600).
+
+**Data** is stored separately on each device. To move your history between phone and PC, use **Garage → Export backup** on one and **Restore backup** on the other.
 
 ## Android app (needed for the Bluetooth ELM327)
 
