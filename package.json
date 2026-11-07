@@ -1,0 +1,27 @@
+{
+  "name": "garage-health",
+  "version": "0.1.0",
+  "description": "Vehicle maintenance tracker with 3D health map and ELM327 OBD-II",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "vite build",
+    "preview": "vite preview --host",
+    "cap:sync": "npm run build && npx cap sync android",
+    "cap:open": "npx cap open android"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@capacitor/android": "^6.2.3",
+    "@capacitor/core": "^6.2.3",
+    "@e-is/capacitor-bluetooth-serial": "^6.0.3",
+    "dexie": "^4.4.7",
+    "papaparse": "^5.7.0",
+    "three": "^0.187.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.2.3",
+    "vite": "^8.3.6"
+  },
+  "type": "module"
+}

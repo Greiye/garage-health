@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Garage Health</string>
+    <string name="title_activity_main">Garage Health</string>
+    <string name="package_name">com.mike.garagehealth</string>
+    <string name="custom_url_scheme">com.mike.garagehealth</string>
+</resources>

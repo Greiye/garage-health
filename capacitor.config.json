@@ -1,0 +1,6 @@
+{
+  "appId": "com.mike.garagehealth",
+  "appName": "Garage Health",
+  "webDir": "dist",
+  "android": { "allowMixedContent": false }
+}
