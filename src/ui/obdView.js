@@ -1,6 +1,6 @@
 import { db, getSetting, setSetting } from '../data/db.js';
 import { addFlag } from '../data/repo.js';
-import { BluetoothTransport, WebSerialTransport, WebBleTransport, DemoTransport, Elm327, Poller } from '../obd/elm327.js';
+import { BluetoothTransport, normalizeMac, WebSerialTransport, WebBleTransport, DemoTransport, Elm327, Poller } from '../obd/elm327.js';
 import { CHANNELS, evaluate } from '../obd/pids.js';
 import { describeDtc, partsForDtc, dtcSeverity } from '../obd/dtc.js';
 import { parseObdCsv, summarize, downsample } from '../obd/csvImport.js';
@@ -11,12 +11,12 @@ const DEFAULT_PIDS = ['0C', '0D', '05', '0F', '06', '07', '08', '09', '10', '11'
 const GAUGES = ['rpm', 'speed', 'coolant', 'voltage', 'ltft1', 'ltft2', 'stft1', 'stft2', 'iat', 'maf', 'throttle', 'load', 'timing', 'o2_b1s1', 'o2_b2s1', 'o2_b1s2', 'o2_b2s2'];
 
 // Connection state survives tab switches.
-const live = { elm: null, transport: null, poller: null, sample: {}, recording: null, status: 'disconnected', info: null, log: [], alerts: new Map() };
+const live = { autoTried: new Set(), elm: null, transport: null, poller: null, sample: {}, recording: null, status: 'disconnected', info: null, log: [], alerts: new Map() };
 
 export async function renderObd(app, el) {
   const native = BluetoothTransport.available();
   const serial = !native && WebSerialTransport.available();
-  const lastAddr = await getSetting('obdAddress');
+  const saved = native ? await savedAdapter(app.st.vehicle.id) : null;
   const sessions = await db.obdSessions.where({ vehicleId: app.st.vehicle.id }).reverse().sortBy('date');
   const dtcs = await db.dtcs.where({ vehicleId: app.st.vehicle.id }).toArray();
   const activeDtcs = dtcs.filter((d) => d.active);
@@ -31,11 +31,13 @@ export async function renderObd(app, el) {
         <button class="btn" data-act="disconnect">Disconnect</button>
         <button class="btn ${live.recording ? 'danger' : 'primary'}" data-act="record">${live.recording ? `Stop recording (${live.recording.rows.length})` : 'Record session'}</button>
         <button class="btn" data-act="readdtc">Read codes</button>`
-      : `${native ? `<button class="btn primary" data-act="scan">Find adapter</button>${lastAddr ? `<button class="btn" data-act="reconnect">Reconnect ${esc(lastAddr)}</button>` : ''}<button class="btn" data-act="manual">Enter MAC</button>` : ''}
+      : `${native ? `${saved ? `<button class="btn primary" data-act="reconnect">Connect ${esc(saved.name || saved.address)}</button>` : ''}<button class="btn ${saved ? '' : 'primary'}" data-act="scan">Paired adapters</button><button class="btn" data-act="manual">Enter address</button>` : ''}
         ${serial ? '<button class="btn primary" data-act="serial">Connect adapter (COM/USB)</button><select data-baud title="USB adapters: try 38400, then 115200 or 9600"><option>38400</option><option>115200</option><option>9600</option></select>' : ''}
         ${!native && WebBleTransport.available() ? '<button class="btn" data-act="ble">Connect BLE adapter</button>' : ''}
         <button class="btn ${native || serial ? '' : 'primary'}" data-act="demo">Demo adapter</button>`}
     </div>
+    ${native && saved ? `<div class="row small saved-adapter"><span class="grow">Saved for this vehicle: <b>${esc(saved.name || 'Adapter')}</b> <span class="muted">${esc(saved.address)}</span></span><label class="tgl"><input type="checkbox" data-auto ${saved.auto !== false ? 'checked' : ''}> Auto-connect</label><button class="btn small" data-act="forget">Forget</button></div>` : ''}
+    ${native && !saved && live.status !== 'connected' ? '<p class="muted small">Pair the adapter in Android Settings → Connected devices first (PIN is usually 1234 or 0000), then tap Paired adapters. The app remembers it for this vehicle and reconnects on its own.</p>' : ''}
     <div class="devices"></div>
     <div class="gauges">${GAUGES.map((ch) => gauge(ch)).join('')}</div>
     ${live.alerts.size ? `<ul class="list alerts">${[...live.alerts.values()].map((a) => `<li class="row-item"><span class="dot lv-${a.sev === 'critical' ? 'red' : a.sev === 'warn' ? 'orange' : 'yellow'}"></span>${esc(a.text)}</li>`).join('')}</ul>` : ''}
@@ -61,6 +63,14 @@ export async function renderObd(app, el) {
   </section>`;
 
   el.onclick = (e) => onClick(app, el, e);
+  const auto = el.querySelector('[data-auto]');
+  if (auto) auto.onchange = () => saveAdapter(app.st.vehicle.id, { ...saved, auto: auto.checked });
+  // Native auto-connect: once per app launch per vehicle, like OBD Fusion.
+  const vid = app.st.vehicle.id;
+  if (native && saved && saved.auto !== false && live.status === 'disconnected' && !live.autoTried.has(vid)) {
+    live.autoTried.add(vid);
+    connect(app, el, new BluetoothTransport(), saved.address, saved.name);
+  }
   el.querySelector('[data-csv]').onchange = (e) => importCsv(app, el, e.target.files);
   el.querySelector('[data-manual-dtc]').onsubmit = async (e) => {
     e.preventDefault();
@@ -104,17 +114,31 @@ async function onClick(app, el, e) {
       return;
     }
     if (t.dataset.session) return openSession(app, +t.dataset.session);
-    if (t.dataset.dev) return connect(app, el, new BluetoothTransport(), t.dataset.dev);
+    if (t.dataset.dev) return connect(app, el, new BluetoothTransport(), t.dataset.dev, t.dataset.name);
     if (act === 'scan') {
       const box = el.querySelector('.devices');
-      box.innerHTML = '<p class="muted small">Scanning for 5 seconds… Pair the adapter in Android Bluetooth settings first if it does not show (PIN is usually 1234 or 0000).</p>';
-      const devs = await new BluetoothTransport().scan();
-      box.innerHTML = devs.length ? `<ul class="list">${devs.map((d) => `<li class="row-item" data-dev="${esc(d.address)}"><div class="grow">${esc(d.name || 'Unnamed')}<div class="muted small">${esc(d.address)}</div></div><span>Connect ›</span></li>`).join('')}</ul>` : '<p class="muted small">Nothing found. Make sure the adapter is plugged in with the key on, then try again or enter its MAC address.</p>';
+      box.innerHTML = '<p class="muted small">Loading paired devices…</p>';
+      const devs = (await new BluetoothTransport().listPaired()).filter((d) => d.type !== 2); // skip BLE-only
+      devs.sort((a, b) => looksObd(b) - looksObd(a));
+      box.innerHTML = devs.length
+        ? `<ul class="list">${devs.map((d) => `<li class="row-item" data-dev="${esc(d.address)}" data-name="${esc(d.name || '')}"><div class="grow">${esc(d.name || 'Unnamed')}${looksObd(d) ? ' <span class="muted small">· looks like OBD</span>' : ''}<div class="muted small">${esc(d.address)}</div></div><span>Connect ›</span></li>`).join('')}</ul>`
+        : '<p class="muted small">No paired Bluetooth devices. Pair the adapter in Android Settings → Connected devices → Pair new device (PIN 1234 or 0000), then try again, or enter its address.</p>';
     }
-    if (act === 'reconnect') return connect(app, el, new BluetoothTransport(), await getSetting('obdAddress'));
+    if (act === 'reconnect') {
+      const sv = await savedAdapter(app.st.vehicle.id);
+      if (sv) return connect(app, el, new BluetoothTransport(), sv.address, sv.name);
+    }
+    if (act === 'forget') {
+      await saveAdapter(app.st.vehicle.id, null);
+      return renderObd(app, el);
+    }
     if (act === 'manual') {
-      modal('Adapter MAC address', `<form class="form"><label>MAC (from Android Bluetooth settings → adapter → details)<input name="mac" placeholder="00:1D:A5:68:98:8B" required pattern="([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}"></label><div class="row end"><button class="btn primary" type="submit">Connect</button></div></form>`, {
-        onSubmit: (fd) => { connect(app, el, new BluetoothTransport(), fd.get('mac').toUpperCase()); },
+      modal('Adapter Bluetooth address', `<form class="form"><label>Bluetooth address (Android Settings → Connected devices → adapter ⚙ → bottom of the page)<input name="mac" placeholder="11:33:77:54:00:34" required autocapitalize="characters" spellcheck="false"></label><div class="row end"><button class="btn primary" type="submit">Connect</button></div></form>`, {
+        onSubmit: (fd) => {
+          const mac = normalizeMac(fd.get('mac'));
+          if (!mac) { toast('That is not a Bluetooth address. It should be 6 pairs like 11:33:77:54:00:34.', 6000); return false; }
+          connect(app, el, new BluetoothTransport(), mac);
+        },
       });
     }
     if (act === 'demo') return connect(app, el, new DemoTransport(), 'DEMO');
@@ -157,13 +181,31 @@ async function onClick(app, el, e) {
   }
 }
 
-async function connect(app, el, transport, address) {
+// Saved adapter per vehicle, kept on this device only (a phone and a PC use different links).
+async function savedAdapter(vehicleId) {
+  const all = await getSetting('obdAdapters', {});
+  if (all[vehicleId]) return all[vehicleId];
+  const legacy = await getSetting('obdAddress');
+  return legacy ? { address: legacy, auto: true } : null;
+}
+async function saveAdapter(vehicleId, v) {
+  const all = { ...(await getSetting('obdAdapters', {})) };
+  if (v) all[vehicleId] = v; else delete all[vehicleId];
+  await setSetting('obdAdapters', all);
+  if (!v) await setSetting('obdAddress', null);
+}
+const looksObd = (d) => (/obd|elm|v-?link|vpeak|vp\d|vgate|icar|konnwei|scan|car|327/i.test(d.name || '') ? 1 : 0);
+
+async function connect(app, el, transport, address, name) {
   live.status = 'connecting';
   live.log = [];
   renderObd(app, el);
   try {
     await transport.connect(address);
-    if (transport instanceof BluetoothTransport) await setSetting('obdAddress', address);
+    if (transport instanceof BluetoothTransport) {
+      const prev = await savedAdapter(app.st.vehicle.id);
+      await saveAdapter(app.st.vehicle.id, { address: transport.address, name: name || (prev?.address === transport.address ? prev.name : '') || '', auto: prev?.auto !== false });
+    }
     live.transport = transport;
     live.elm = new Elm327(transport, (l) => live.log.push(l));
     live.info = await live.elm.init();

@@ -1,9 +1,12 @@
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import { PIDS } from './pids.js';
 import { parseDtcResponse } from './dtc.js';
 
+// Native Bluetooth Classic bridge: android/app/src/main/java/com/mike/garagehealth/ObdSerialPlugin.java
+const ObdSerial = registerPlugin('ObdSerial');
+
 // ---------- Transports ----------
-// Android: Bluetooth Classic SPP via @e-is/capacitor-bluetooth-serial — the same
+// Android: Bluetooth Classic SPP via the app's own ObdSerial plugin — the same
 // kind of link OBD Fusion / OBDroid use with ELM327 adapters.
 export class BluetoothTransport {
   constructor() {
@@ -14,33 +17,24 @@ export class BluetoothTransport {
   static available() {
     return Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
   }
-  async plugin() {
-    if (!this._p) this._p = (await import('@e-is/capacitor-bluetooth-serial')).BluetoothSerial;
-    return this._p;
-  }
-  async enable() {
-    const p = await this.plugin();
-    const { enabled } = await p.enable();
-    if (!enabled) throw new Error('Bluetooth is off');
-  }
-  async scan() {
-    const p = await this.plugin();
-    await this.enable();
-    const { devices } = await p.scan();
-    return devices;
+  plugin() { return ObdSerial; }
+  /** Adapters already paired in Android Bluetooth settings. */
+  async listPaired() {
+    const { devices } = await ObdSerial.listPaired();
+    return devices || [];
   }
   async connect(address) {
-    const p = await this.plugin();
-    await this.enable();
+    address = normalizeMac(address);
+    if (!address) throw new Error('Enter the adapter address as 6 pairs, e.g. 11:33:77:54:00:34');
+    this.listener = await ObdSerial.addListener('data', ({ value }) => this.onData(value));
+    this.dropListener = await ObdSerial.addListener('disconnected', () => { this.address = null; this.waiter?.reject?.(new Error('Adapter disconnected')); });
     try {
-      await p.connect({ address });
+      await ObdSerial.connect({ address });
     } catch (e) {
-      // Many clones only accept insecure RFCOMM.
-      await p.connectInsecure({ address });
+      await this.removeListeners();
+      throw e;
     }
     this.address = address;
-    this.listener = await p.addListener('onRead', ({ value }) => this.onData(value));
-    await p.startNotifications({ address, delimiter: '>' });
   }
   onData(chunk) {
     this.buffer += chunk;
@@ -53,10 +47,9 @@ export class BluetoothTransport {
     }
   }
   async send(cmd, timeout = 4000) {
-    const p = await this.plugin();
     this.buffer = '';
     const done = new Promise((resolve, reject) => {
-      this.waiter = { resolve };
+      this.waiter = { resolve, reject };
       setTimeout(() => {
         if (this.waiter?.resolve === resolve) {
           this.waiter = null;
@@ -64,16 +57,25 @@ export class BluetoothTransport {
         }
       }, timeout);
     });
-    await p.write({ address: this.address, value: cmd + '\r' });
+    await ObdSerial.write({ value: cmd + '\r' });
     return done;
   }
-  async disconnect() {
-    const p = await this.plugin();
-    try { await p.stopNotifications({ address: this.address }); } catch {}
+  async removeListeners() {
     try { await this.listener?.remove(); } catch {}
-    try { await p.disconnect({ address: this.address }); } catch {}
+    try { await this.dropListener?.remove(); } catch {}
+    this.listener = this.dropListener = null;
+  }
+  async disconnect() {
+    await this.removeListeners();
+    try { await ObdSerial.disconnect(); } catch {}
     this.address = null;
   }
+}
+
+// Accepts 11:33:77:54:00:34, 11-33-77-54-00-34, 113377540034 (any case).
+export function normalizeMac(s) {
+  const hex = String(s || '').replace(/[^0-9a-f]/gi, '').toUpperCase();
+  return hex.length === 12 ? hex.match(/../g).join(':') : null;
 }
 
 // PC (Chrome/Edge): Web Serial. Works with USB ELM327 adapters, and with

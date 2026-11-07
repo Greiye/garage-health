@@ -65,7 +65,7 @@ export async function exportBackup() {
 }
 
 // Settings that belong to this device only (sync credentials and state).
-export const LOCAL_ONLY_SETTINGS = ['sync', 'syncState', 'obdAddress'];
+export const LOCAL_ONLY_SETTINGS = ['sync', 'syncState', 'obdAddress', 'obdAdapters'];
 
 export async function importBackup(file) {
   const data = JSON.parse(await file.text());
