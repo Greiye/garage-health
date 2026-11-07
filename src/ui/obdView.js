@@ -15,11 +15,11 @@ const CH_PID = Object.fromEntries(Object.entries(PIDS).map(([pid, d]) => [d.ch, 
 const ALWAYS_PIDS = ['0C', '05', '1F']; // rpm, coolant, run time: needed to know running / warmed-up state
 const PICKABLE = Object.keys(CHANNELS).filter((ch) => CH_PID[ch] || ch === 'voltage');
 async function dashConfig(vehicleId) {
-  return { gauges: GAUGES, rateMs: 0, ...(await getSetting(`obdDash:${vehicleId}`, {})) };
+  return { gauges: GAUGES, rateMs: 0, fsStyle: 'compact', ...(await getSetting(`obdDash:${vehicleId}`, {})) };
 }
 async function saveDashConfig(vehicleId, cfg) {
   live.cfg = cfg;
-  await setSetting(`obdDash:${vehicleId}`, { gauges: cfg.gauges, rateMs: cfg.rateMs });
+  await setSetting(`obdDash:${vehicleId}`, { gauges: cfg.gauges, rateMs: cfg.rateMs, fsStyle: cfg.fsStyle });
   if (live.poller) { live.poller.setPids(pidsFor(cfg)); live.poller.setRate(cfg.rateMs); }
 }
 const pidsFor = (cfg) => [...ALWAYS_PIDS, ...cfg.gauges.filter((ch) => ch !== 'voltage').map((ch) => CH_PID[ch]).filter(Boolean)];
@@ -418,10 +418,11 @@ function chooseGauges(app, el) {
 async function openFullscreen(app) {
   document.querySelector('.obd-fs')?.remove();
   const fs = document.createElement('div');
-  fs.className = 'obd-fs';
+  fs.className = `obd-fs fs-${live.cfg.fsStyle === 'large' ? 'large' : 'compact'}`;
   fs.innerHTML = `
     <div class="fs-bar"><b>${esc(app.st.vehicle.name)}</b><span class="status st-${live.status}">${esc(live.status)}</span><span class="muted small" data-hz></span><span class="grow"></span>
       <select data-rate>${RATES.map(([ms, l]) => `<option value="${ms}" ${ms === live.cfg.rateMs ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      <button class="btn small" data-style>${live.cfg.fsStyle === 'large' ? 'Compact' : 'Large'}</button>
       <button class="btn small" data-exit>✕ Exit</button></div>
     <div class="fs-gauges">${live.cfg.gauges.map((ch) => gauge(ch)).join('')}</div>
     <ul class="fs-alerts"></ul>`;
@@ -437,6 +438,12 @@ async function openFullscreen(app) {
   const onKey = (e) => { if (e.key === 'Escape') exit(); };
   document.addEventListener('keydown', onKey);
   fs.querySelector('[data-exit]').onclick = exit;
+  fs.querySelector('[data-style]').onclick = async (e) => {
+    const large = live.cfg.fsStyle !== 'large';
+    await saveDashConfig(app.st.vehicle.id, { ...live.cfg, fsStyle: large ? 'large' : 'compact' });
+    fs.className = `obd-fs fs-${large ? 'large' : 'compact'}`;
+    e.target.textContent = large ? 'Compact' : 'Large';
+  };
   fs.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && document.body.contains(fs)) exit(); });
   try { await fs.requestFullscreen?.({ navigationUI: 'hide' }); } catch {}
   try { await screen.orientation?.lock?.('landscape'); } catch {}

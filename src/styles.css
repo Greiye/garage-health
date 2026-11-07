@@ -207,10 +207,20 @@ canvas.chart { width: 100%; height: auto; background: var(--bg); border-radius: 
 .obd-fs select, .dash-tools select { width: auto; }
 .obd-fs { position: fixed; inset: 0; z-index: 1000; background: var(--bg); color: var(--text); display: flex; flex-direction: column; padding: max(8px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left)); }
 .obd-fs .fs-bar { display: flex; gap: .6rem; align-items: center; margin-bottom: .5rem; }
-.obd-fs .fs-gauges { flex: 1; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); grid-auto-rows: minmax(90px, 1fr); gap: .5rem; overflow: auto; }
-.obd-fs .gauge { justify-content: center; align-items: center; text-align: center; background: var(--card); }
-.obd-fs .g-name { font-size: clamp(.8rem, 2vw, 1.1rem); }
-.obd-fs .g-val { font-size: clamp(2rem, 7vmin, 4.5rem); line-height: 1.1; }
-.obd-fs .g-unit { font-size: clamp(.8rem, 1.8vw, 1rem); }
+.obd-fs .fs-gauges { flex: 1; display: grid; gap: .5rem; overflow: auto; align-content: start; }
+.obd-fs .gauge { background: var(--card); }
+/* Large: big tiles */
+.fs-large .fs-gauges { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); grid-auto-rows: minmax(90px, 1fr); align-content: stretch; }
+.fs-large .gauge { justify-content: center; align-items: center; text-align: center; }
+.fs-large .g-name { font-size: clamp(.8rem, 2vw, 1.1rem); }
+.fs-large .g-val { font-size: clamp(2rem, 7vmin, 4.5rem); line-height: 1.1; }
+.fs-large .g-unit { font-size: clamp(.8rem, 1.8vw, 1rem); }
+/* Compact (default): dense rows, name left, value + unit right */
+.fs-compact .fs-gauges { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 2px 10px; }
+.fs-compact .gauge { flex-direction: row; align-items: baseline; gap: .3rem; padding: 2px 6px; border-radius: 4px; border-width: 0 0 1px; background: transparent; }
+.fs-compact .g-name { flex: 1; font-size: .8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fs-compact .g-val { font-size: 1.05rem; line-height: 1.3; }
+.fs-compact .g-unit { font-size: .7rem; min-width: 2.2em; }
+.fs-compact .g-critical, .fs-compact .g-warn { border-width: 1px; }
 .obd-fs .fs-alerts { list-style: none; margin: .4rem 0 0; padding: 0; font-size: 1rem; }
 .obd-fs .fs-alerts li { display: flex; gap: .5rem; align-items: center; }
