@@ -1,16 +1,23 @@
 import { db } from '../data/db.js';
 import { esc, modal } from './util.js';
+import { renderCatalog } from './catalogView.js';
+
+const modeBar = (m) => `<div class="seg wide">${[['specs', 'Specs'], ['catalog', 'Parts catalog']].map(([k, l]) => `<button class="seg-b ${m === k ? 'on' : ''}" data-mode="${k}">${l}</button>`).join('')}</div>`;
 
 // Per-vehicle spec sheet: fluids, capacities, torque values, part numbers.
 export function renderSpecs(app, el) {
+  const mode = app.specMode || 'specs';
+  if (mode === 'catalog') return renderCatalog(app, el, { header: modeBar(mode) });
   const v = app.st.vehicle;
   const specs = v.specs || [];
   const groups = [...new Set(specs.map((s) => s.group))];
-  el.innerHTML = `
+  el.innerHTML = `${modeBar(mode)}
     <div class="actions"><button class="btn primary" data-act="add">Add spec</button></div>
     ${specs.some((s) => s.verify) ? '<p class="callout small">Values marked <span class="verify">verify</span> are starting points. Check them against your service manual, the oil cap or the door placard, then edit to clear the mark.</p>' : ''}
     ${groups.map((g) => `<section><h3>${esc(g)}</h3><dl class="kv specs">${specs.map((s, i) => (s.group === g ? `<dt>${esc(s.label)}</dt><dd data-i="${i}">${esc(s.value) || '<span class="muted">tap to set</span>'} ${s.verify ? '<span class="verify">verify</span>' : ''}</dd>` : '')).join('')}</dl></section>`).join('') || '<p class="muted">No specs yet.</p>'}`;
   el.onclick = (e) => {
+    const m = e.target.closest('[data-mode]');
+    if (m) { app.specMode = m.dataset.mode; return renderSpecs(app, el); }
     const d = e.target.closest('[data-i]');
     if (d) return edit(app, +d.dataset.i);
     if (e.target.closest('[data-act=add]')) edit(app, -1);

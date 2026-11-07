@@ -20,6 +20,8 @@ export const FLAG_SEVERITY = {
   critical: { label: 'Critical', frac: 1.2 },
 };
 
+export const SOURCE_LABEL = { user: 'Symptom', inspection: 'Inspection', obd: 'OBD', dtc: 'DTC' };
+
 export function levelFor(frac) {
   if (frac == null || Number.isNaN(frac)) return 'unknown';
   if (frac >= 1) return 'red';
@@ -96,8 +98,12 @@ export function partHealth(part, ctx) {
 
   // Flags
   for (const f of ctx.flags.get(part.id) || []) {
-    push(FLAG_SEVERITY[f.severity]?.frac ?? 0.6, `${f.source === 'user' ? 'Symptom' : f.source.toUpperCase()}: ${f.text}`);
+    push(FLAG_SEVERITY[f.severity]?.frac ?? 0.6, `${SOURCE_LABEL[f.source] || f.source.toUpperCase()}: ${f.text}`);
   }
+
+  // Passed an inspection or test → good unless something else says otherwise
+  const insp = ctx.inspected?.get(part.id);
+  if (worst == null && insp) push(0, `Passed inspection ${insp}`);
 
   // Condition-based part with a known component and nothing wrong → good
   if (worst == null && !part.im && !part.mo && (comp || last)) push(0, 'Installed, no issues logged');

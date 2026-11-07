@@ -1,10 +1,12 @@
 import { db, todayISO } from '../data/db.js';
-import { LEVELS, FLAG_SEVERITY, monthsBetween } from '../data/health.js';
+import { LEVELS, FLAG_SEVERITY, SOURCE_LABEL, monthsBetween } from '../data/health.js';
 import { addFlag, resolveFlag, saveService, addMeasurement, ensureComponent } from '../data/repo.js';
 import { CORNER_NAME } from '../data/templates.js';
 import { esc, fmtMi, fmtDate, fmtMoney, modal, num, toast, blobURL, confirmDialog } from './util.js';
 import { openServiceForm, componentFieldsHTML, readComponentFields } from './serviceForm.js';
 import { openRotation } from './rotation.js';
+import { vehicleCatalog } from '../data/repo.js';
+import { pnHTML } from './catalogView.js';
 
 export const chip = (level, extra = '') => `<span class="chip lv-${level}">${LEVELS[level].label}${extra}</span>`;
 export const dot = (level, blink) => `<span class="dot lv-${level} ${blink ? 'blink' : ''}"></span>`;
@@ -53,6 +55,7 @@ export async function renderPart(app, el, partId) {
 
   ${h.reasons.length ? `<ul class="reasons">${h.reasons.map((r) => `<li>${dot(r.level)} ${esc(r.text)}</li>`).join('')}</ul>` : ''}
   ${p.notes ? `<p class="note">${esc(p.notes)}</p>` : ''}
+  ${catalogFor(st.vehicle, p)}
 
   <div class="actions">
     <button class="btn primary" data-act="log">Log service</button>
@@ -63,7 +66,7 @@ export async function renderPart(app, el, partId) {
     <button class="btn warn" data-act="symptom">Report symptom</button>
   </div>
 
-  ${flags.length ? `<section><h3>Active issues</h3><ul class="list">${flags.map((f) => `<li class="row-item">${dot(f.severity === 'critical' ? 'red' : f.severity === 'warn' ? 'orange' : 'yellow')}<div class="grow"><div>${esc(f.text)}</div><div class="muted small">${esc(f.source === 'user' ? 'You' : f.source.toUpperCase())} · ${fmtDate(f.createdAt?.slice(0, 10))}</div></div><button class="btn small" data-resolve="${f.id}">Resolve</button></li>`).join('')}</ul></section>` : ''}
+  ${flags.length ? `<section><h3>Active issues</h3><ul class="list">${flags.map((f) => `<li class="row-item">${dot(f.severity === 'critical' ? 'red' : f.severity === 'warn' ? 'orange' : 'yellow')}<div class="grow"><div>${esc(f.text)}</div><div class="muted small">${esc(f.source === 'user' ? 'You' : SOURCE_LABEL[f.source] || f.source.toUpperCase())} · ${fmtDate(f.createdAt?.slice(0, 10))}</div></div><button class="btn small" data-resolve="${f.id}">Resolve</button></li>`).join('')}</ul></section>` : ''}
 
   <section><div class="sec-head"><h3>Installed ${tire ? 'tire' : 'part'}</h3><button class="btn small" data-act="editcomp">${comp ? 'Edit' : 'Add details'}</button></div>
     ${comp ? `<dl class="kv">
@@ -246,4 +249,11 @@ function openPartSettings(app, p) {
       await app.refresh();
     },
   });
+}
+
+// Catalog lines (fluids, filters, gaskets, part numbers) for one part.
+function catalogFor(vehicle, p) {
+  const items = vehicleCatalog(vehicle).filter((c) => c.parts.includes(p.key));
+  if (!items.length) return '';
+  return `<details class="sys"><summary><span class="grow">Parts, fluids & gaskets</span><span class="muted small">${items.length}</span></summary><ul class="list compact">${items.map((c) => `<li class="row-item"><div class="grow"><div>${esc(c.name)}${c.qty > 1 ? ` ×${c.qty}` : ''}</div>${c.spec ? `<div class="small">${esc(c.spec)}</div>` : ''}${c.capacity ? `<div class="small muted">Capacity: ${esc(c.capacity)}</div>` : ''}${c.pns?.length ? `<div class="pns">${pnHTML(c.pns)}</div>` : ''}${c.fab ? `<div class="small muted">Make it: ${esc(c.fab)}</div>` : ''}</div></li>`).join('')}</ul></details>`;
 }

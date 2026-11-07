@@ -12,7 +12,9 @@ Vehicle maintenance tracker with a 3D health map. It's built for any vehicle, an
   - **Trouble codes**: reads stored and pending codes, which light the related parts (misfires blink the plugs, wires and coils). Codes can be cleared after a confirmation.
   - **CSV import** from OBD Fusion, OBDroid and Torque. Columns are matched by name and units are converted to °F and mph. Each import gets a chart and min/avg/max stats, and out-of-range readings can be flagged onto parts in one click.
   - **Demo adapter**: a simulated adapter for trying all of this in a browser.
-- **Specs** sheet per vehicle: fluids, capacities, torque values and part numbers. The Mustang values are marked "verify".
+- **Specs** sheet per vehicle: fluids, capacities, torque values and part numbers. Mustang fluids, capacities and filter/plug numbers come from the 2001 owner guide; torque values are still marked "verify".
+- **Parts catalog** (Specs → Parts catalog): everything you can buy or make for the vehicle, grouped as fluids, filters, gaskets, seals, wear items, replacement parts, sensors, hardware and fabricable items. Each line has spec, capacity, part numbers and how to fabricate it where that makes sense, and links to the parts it serves (also shown on each part's page). Unconfirmed numbers are marked "verify". Lines are editable and export to CSV.
+- **Inspect**: a 150+ point inspection (220 points for the Mustang) and a battery of 39 tests (compression, leak-down, vacuum, cooling pressure, block test, fuel pressure, injector balance, battery load, charging, voltage drop, parasitic draw, fuel trims, O2, backpressure, brake measurements, suspension play, ride height, clutch slip and more). Every check and test maps to parts. Measurements pass or fail against limits automatically. Finishing a run flags watch/fail items on their parts (yellow/orange/red on the model, critical safety items blink), clears flags for items that now pass, marks passed parts green and saves measurements (tread, pads, battery, compression) into each part's history.
 - **Garage**: multiple vehicles built from templates, configuration options that decide which parts exist, custom parts, odometer history, and a full JSON backup including photos.
 
 ## Run locally (development)
@@ -59,6 +61,9 @@ npm run cap:open   # opens Android Studio → Run on your Pixel (USB debugging o
 
 ```
 src/data/templates.js   part catalog generated from vehicle options + presets (Mustang specs)
+src/data/catalog.js     generic parts catalog generated from vehicle options
+src/data/catalogs/*     per-vehicle catalog data (part numbers, specs, capacities)
+src/data/inspection.js  inspection checklist + test battery generated from options, scoring
 src/data/health.js      health scoring (interval, age, measurement, flags → color, blink)
 src/data/repo.js        vehicles, services, components, rotation, flags (IndexedDB via Dexie)
 src/scene/carModel.js   parametric 3D vehicle, one mesh group per part slot

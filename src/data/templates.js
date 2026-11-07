@@ -46,6 +46,8 @@ export function buildPartList(o) {
   add({ key: 'pcv', name: 'PCV valve', system: 'Engine', slot: 'intake', im: 60000, mo: 60 });
   add({ key: 'engine_mount_L', name: 'Engine mount left', system: 'Engine', slot: 'mounts', position: 'L', im: 0, mo: 0 });
   add({ key: 'engine_mount_R', name: 'Engine mount right', system: 'Engine', slot: 'mounts', position: 'R', im: 0, mo: 0 });
+  add({ key: 'front_cover', name: 'Timing cover gasket & front crank seal', system: 'Engine', slot: 'engine', im: 0, mo: 0 });
+  add({ key: 'rear_main_seal', name: 'Rear main seal', system: 'Engine', slot: 'engine', im: 0, mo: 0 });
   add({ key: 'cam_sensor', name: 'Camshaft position sensor', system: 'Engine', slot: 'engine', im: 0, mo: 0 });
   add({ key: 'crank_sensor', name: 'Crankshaft position sensor', system: 'Engine', slot: 'engine', im: 0, mo: 0 });
 
@@ -60,6 +62,9 @@ export function buildPartList(o) {
   add({ key: 'thermostat', name: 'Thermostat', system: 'Cooling', slot: 'thermostat', im: 100000, mo: 120 });
   add({ key: 'water_pump', name: 'Water pump', system: 'Cooling', slot: 'waterPump', im: 100000, mo: 120 });
   add({ key: 'fan', name: 'Cooling fan', system: 'Cooling', slot: 'radiator', im: 0, mo: 0 });
+  add({ key: 'rad_cap', name: 'Radiator / reservoir cap', system: 'Cooling', slot: 'radiator', im: 0, mo: 0 });
+  add({ key: 'heater_core', name: 'Heater core & control valve', system: 'Cooling', slot: 'interior', im: 0, mo: 0 });
+  add({ key: 'ac_system', name: 'A/C compressor, condenser & lines', system: 'Cooling', slot: 'radiator', im: 0, mo: 0 });
 
   // ---------- Accessory drive ----------
   add({ key: 'belt', name: 'Serpentine belt', system: 'Engine', slot: 'belt', im: 60000, mo: 60 });
@@ -140,6 +145,7 @@ export function buildPartList(o) {
       note: 'Set nominal and minimum thickness from the number cast into the rotor.' });
     for (const k of c) add({ key: `caliper_${k}`, name: `Caliper ${CORNER_NAME[k]}`, system: 'Brakes', slot: `brake_${k}`, position: k, im: 0, mo: 0 });
   }
+  add({ key: 'parking_brake', name: 'Parking brake cables & hardware', system: 'Brakes', slot: 'brake_RL', also: ['brake_RR'], im: 0, mo: 0 });
   add({ key: 'brake_lines', name: 'Brake lines & hoses', system: 'Brakes', slot: 'brakeMaster', im: 0, mo: 0 });
 
   // ---------- Tires & wheels ----------
@@ -208,6 +214,11 @@ export function buildPartList(o) {
   add({ key: 'wipers', name: 'Wiper blades', system: 'Body & lights', slot: 'wipers', im: 0, mo: 12 });
   add({ key: 'headlights', name: 'Headlight bulbs & lenses', system: 'Body & lights', slot: 'headlights', im: 0, mo: 0 });
   add({ key: 'taillights', name: 'Tail, brake & turn lights', system: 'Body & lights', slot: 'taillights', im: 0, mo: 0 });
+  add({ key: 'washer', name: 'Washer pump, reservoir & horn', system: 'Body & lights', slot: 'wipers', im: 0, mo: 0 });
+  add({ key: 'interior', name: 'Gauges, switches, HVAC controls & blower', system: 'Body & lights', slot: 'interior', im: 0, mo: 0 });
+  add({ key: 'restraints', name: 'Seat belts & airbag system', system: 'Body & lights', slot: 'interior', im: 0, mo: 0 });
+  add({ key: 'body', name: 'Body, doors, glass, seals & latches', system: 'Body & lights', slot: 'interior', im: 0, mo: 0 });
+  add({ key: 'chassis', name: 'Unibody, frame rails & floor pans (rust)', system: 'Body & lights', slot: 'interior', im: 0, mo: 0 });
 
   return P.map((p) => ({ im: 0, mo: 0, ...p }));
 }
@@ -235,22 +246,35 @@ export const PRESETS = [
       head_gaskets: 'The 3.8 is known for head gasket failures, often from overheating. Keep the cooling system healthy.',
       clutch_cable: 'SN95 uses a cable with a self-adjusting quadrant. Many owners swap to an aftermarket quadrant and adjustable cable.',
       egr: 'EGR with a DPFE sensor. P0401 is often the DPFE sensor or its hoses.',
+      engine: 'Owner guide lists 9.4:1 compression. Ford pass rule: lowest cylinder at least 75% of the highest.',
       shoes_R: 'V6 cars without ABS usually have rear drums. Switch to discs in Settings if yours has them.',
     },
+    // From the 2001 Mustang owner guide (Capacities and specifications). Torque values are not in the guide.
     specs: [
-      ['Fluids', 'Engine oil', '5W-20 or 5W-30 (check oil cap / owner manual)', true],
-      ['Fluids', 'Oil capacity with filter', '4.5 qt', true],
-      ['Fluids', 'Oil filter', 'Motorcraft FL-820S', true],
-      ['Fluids', 'Manual transmission (T-5)', 'Mercon ATF, fill to bottom of fill plug', true],
-      ['Fluids', 'Rear axle (7.5")', '75W-140 synthetic + friction modifier if Traction-Lok', true],
-      ['Fluids', 'Brake fluid', 'DOT 3', true],
-      ['Fluids', 'Power steering', 'Mercon ATF', true],
-      ['Fluids', 'Coolant', 'Check the reservoir decal for type before mixing', true],
+      ['Fluids', 'Engine oil', 'SAE 5W-20, Ford WSS-M2C153-H (Motorcraft XO-5W20-QSP)', false],
+      ['Fluids', 'Oil capacity with filter', '5.0 qt (4.7 L)', false],
+      ['Fluids', 'Coolant', 'Green VC-4-A (ESE-M97B44-A) or Gold VC-7-A (WSS-M97B51-A1). Use the type already in the car.', false],
+      ['Fluids', 'Coolant capacity', '11.8 qt (11.2 L)', false],
+      ['Fluids', 'Manual transmission (T-5)', 'MERCON ATF (XT-2-QDX), 5.6 pt (2.6 L), fill to bottom of fill hole', false],
+      ['Fluids', 'Rear axle (7.5 in)', 'SAE 80W-90 (XY-80W90-QL, WSP-M2C197-A), 3.25 pt (1.5 L); +4 oz friction modifier C8AZ-19B546-A if Traction-Lok', false],
+      ['Fluids', 'Rear axle (8.8 in, if swapped)', 'SAE 75W-140 synthetic (XY-75W140-QL), 4.25 pt (2.0 L)', false],
+      ['Fluids', 'Brake fluid', 'DOT 3 (C6AZ-19542-AB, ESA-M6C25-A)', false],
+      ['Fluids', 'Power steering', 'MERCON ATF (XT-2-QM), keep in FULL HOT range', false],
+      ['Fluids', 'Fuel tank', '15.7 gal, 87 octane', false],
+      ['Fluids', 'Washer fluid', '4.0 qt', false],
+      ['Part numbers', 'Oil filter', 'Motorcraft FL-400S', false],
+      ['Part numbers', 'Air filter', 'Motorcraft FA-1611', false],
+      ['Part numbers', 'Fuel filter', 'Motorcraft FG-986', false],
+      ['Part numbers', 'PCV valve', 'Motorcraft EV-152', false],
+      ['Part numbers', 'Spark plugs', 'Motorcraft AWSF-42EE (match suffix on engine decal)', false],
+      ['Part numbers', 'Battery', 'Motorcraft BXT-59', false],
       ['Torque', 'Lug nuts', '100 ft-lb', true],
       ['Torque', 'Oil drain plug', '', false],
       ['Torque', 'Spark plugs', '', false],
-      ['Ignition', 'Spark plug gap', '0.054 in', true],
-      ['Ignition', 'Firing order', '1-4-2-5-3-6', true],
+      ['Ignition', 'Spark plug gap', '0.052-0.056 in (1.3-1.4 mm)', false],
+      ['Ignition', 'Firing order', '1-4-2-5-3-6', false],
+      ['Ignition', 'Ignition system', 'EDIS (coil pack with plug wires)', false],
+      ['Engine', 'Compression ratio', '9.4:1', false],
       ['Tires', 'Pressure', 'See driver door placard', false],
       ['OBD', 'Protocol', 'SAE J1850 PWM (Ford 1996-2003). Adapter must support PWM.', false],
     ],
