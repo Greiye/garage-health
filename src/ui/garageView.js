@@ -1,3 +1,4 @@
+import { getCustomModel, saveCustomModel, removeCustomModel } from '../scene/customModel.js';
 import { syncCardHTML, onSyncClick, openSyncSetup } from './syncView.js';
 import { db, setSetting, exportBackup, importBackup, todayISO } from '../data/db.js';
 import { createVehicle, applyOptions, setOdometer } from '../data/repo.js';
@@ -11,6 +12,7 @@ export async function renderGarage(app, el) {
   const odo = (await db.odometer.where({ vehicleId: v.id }).toArray()).sort((a, b) => (a.date < b.date ? 1 : -1));
   const hidden = app.st.allParts.filter((p) => p.hidden);
   const syncCard = await syncCardHTML();
+  const cm = await getCustomModel(v.id).catch(() => null);
   el.innerHTML = `
   <section class="card"><div class="sec-head"><h3>Vehicles</h3><button class="btn small primary" data-act="add">Add vehicle</button></div>
     <ul class="list">${vehicles.map((x) => `<li class="row-item ${x.id === v.id ? 'current' : ''}" data-vehicle="${x.id}"><span class="swatch" style="background:${esc(x.bodyColor)}"></span><div class="grow"><div>${esc(x.name)}</div><div class="muted small">${esc([x.engine, x.transmission].filter(Boolean).join(' · '))} · ${fmtMi(x.odometer)}</div></div>${x.id === v.id ? '<span class="muted small">current</span>' : '<span>›</span>'}</li>`).join('')}</ul>
@@ -19,6 +21,12 @@ export async function renderGarage(app, el) {
   <section class="card"><div class="sec-head"><h3>${esc(v.name)}</h3><button class="btn small" data-act="edit">Edit</button></div>
     <dl class="kv">${[['Year', v.year], ['Make', v.make], ['Model', v.model], ['Trim', v.trim], ['Engine', v.engine], ['Transmission', v.transmission], ['VIN', v.vin], ['Odometer', fmtMi(v.odometer)]].filter(([, x]) => x).map(([k, x]) => `<dt>${k}</dt><dd>${esc(x)}</dd>`).join('')}</dl>
     <details class="small"><summary>Configuration (decides which parts exist)</summary><dl class="kv">${OPTION_FIELDS.map(([k, label]) => `<dt>${label}</dt><dd>${esc(String(v.options?.[k]))}</dd>`).join('')}</dl></details>
+  </section>
+
+  <section class="card"><h3>3D model</h3>
+    <p class="small">${cm ? `Using <b>${esc(cm.name)}</b> (${(cm.size / 1048576).toFixed(1)} MB). Wheels show tire health, calipers show brake health; tap X-ray to see every other part inside.` : 'Using the built-in model.'}</p>
+    <p class="muted small">Load your own .glb model for this vehicle. It's saved on this device only: not synced, not in backups, so import it on each device. Front, size and wheels are fitted automatically.</p>
+    <div class="actions"><label class="btn file-btn">${cm ? 'Replace model' : 'Use my own 3D model'}<input type="file" accept=".glb,model/gltf-binary,application/octet-stream" data-model hidden></label>${cm ? '<button class="btn" data-act="model-reset">Use built-in model</button>' : ''}</div>
   </section>
 
   <section class="card"><div class="sec-head"><h3>Odometer</h3><button class="btn small" data-act="odo">Update</button></div>
@@ -52,6 +60,7 @@ export async function renderGarage(app, el) {
     if (a === 'add') openVehicleWizard(app);
     if (a === 'edit') openVehicleEdit(app);
     if (a === 'odo') openOdometer(app);
+    if (a === 'model-reset') { await removeCustomModel(v.id); app.viewer.setVehicle(v.options, v.bodyColor, v.id); toast('Built-in model'); return renderGarage(app, el); }
     if (a === 'custom') openCustomPart(app);
     if (a === 'export') { download(await exportBackup(), `garage-health-backup-${todayISO()}.json`); toast('Backup exported'); }
     if (a === 'delete') {
@@ -61,6 +70,17 @@ export async function renderGarage(app, el) {
       const next = await db.vehicles.toCollection().first();
       if (next) app.loadVehicle(next.id); else location.reload();
     }
+  };
+  el.querySelector('[data-model]').onchange = async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    toast('Loading model…');
+    try {
+      await saveCustomModel(v.id, f);
+      app.viewer.setVehicle(v.options, v.bodyColor, v.id);
+      toast(`3D model saved on this device (${(f.size / 1048576).toFixed(1)} MB)`);
+    } catch (err) { toast(err.message, 6000); }
+    renderGarage(app, el);
   };
   el.querySelector('[data-import]').onchange = async (e) => {
     const f = e.target.files[0];

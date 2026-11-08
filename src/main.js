@@ -30,7 +30,7 @@ const app = {
 
   async loadVehicle(id) {
     this.st = await loadVehicleState(id);
-    this.viewer.setVehicle(this.st.vehicle.options, this.st.vehicle.bodyColor);
+    this.viewer.setVehicle(this.st.vehicle.options, this.st.vehicle.bodyColor, this.st.vehicle.id);
     this.viewer.applyHealth(this.st.slotHealth);
     this.renderHeader();
     this.showTab('health');
@@ -41,7 +41,7 @@ const app = {
     const prevOpts = JSON.stringify(this.st.vehicle.options) + this.st.vehicle.bodyColor;
     this.st = await loadVehicleState(this.st.vehicle.id);
     if (JSON.stringify(this.st.vehicle.options) + this.st.vehicle.bodyColor !== prevOpts) {
-      this.viewer.setVehicle(this.st.vehicle.options, this.st.vehicle.bodyColor);
+      this.viewer.setVehicle(this.st.vehicle.options, this.st.vehicle.bodyColor, this.st.vehicle.id);
     }
     this.viewer.applyHealth(this.st.slotHealth);
     this.renderHeader();

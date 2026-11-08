@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { buildVehicle } from './carModel.js';
+import { loadCustomScene, fitCustomModel } from './customModel.js';
 import { LEVELS } from '../data/health.js';
 
 // 3D viewer: orbit/zoom, tap to select a part slot, health colors,
@@ -80,9 +81,15 @@ export class Viewer {
     this.renderer.setAnimationLoop(() => this.tick());
   }
 
-  setVehicle(options, bodyColor) {
+  setVehicle(options, bodyColor, vehicleId) {
     if (this.model) this.scene.remove(this.model.root);
+    this.customModel = false;
     this.model = buildVehicle(options, bodyColor);
+    const token = (this.buildToken = (this.buildToken || 0) + 1);
+    if (vehicleId != null) {
+      loadCustomScene(vehicleId).then((sc) => { if (sc && token === this.buildToken) this.useCustomModel(sc, bodyColor); })
+        .catch((e) => { console.error(e); this.onModelError?.(e); });
+    }
     this.scene.add(this.model.root);
     this.setXray(this.xray);
     this.setExplode(this.explode);
@@ -90,6 +97,38 @@ export class Viewer {
     const d = this.model.dims;
     this.controls.target.set(0, d.H * 0.38, 0);
     this.placeCamera();
+  }
+
+  // Swap the drawn body for the user's model. Its wheels and calipers join the
+  // tire and brake slots (health colors, tap to open); all other app parts stay
+  // inside the body for x-ray.
+  useCustomModel(scene, bodyColor) {
+    const m = this.model;
+    const fit = fitCustomModel(scene, m.dims, bodyColor);
+    for (const c of [...m.body.children]) c.visible = false;
+    m.body.add(fit.group);
+    m.body.userData.custom = fit.xray;
+    m.root.updateMatrixWorld(true);
+    const join = (list, prefix, replace) => {
+      for (const { obj, corner } of list) {
+        const g = m.slots.get(`${prefix}_${corner}`);
+        if (!g) continue;
+        if (replace && !g.userData.custom) for (const c of [...g.children]) g.remove(c);
+        g.userData.custom = true;
+        const saved = g.position.clone();
+        g.position.set(0, 0, 0); g.updateMatrixWorld(true);
+        g.attach(obj);
+        obj.traverse((o) => { if (o.isMesh) { o.material = g.userData.material; o.userData.slot = g.name; o.castShadow = true; } });
+        g.userData.center = new THREE.Box3().setFromObject(g).getCenter(new THREE.Vector3());
+        g.position.copy(saved);
+      }
+    };
+    join(fit.wheels, 'tire', true);
+    join(fit.calipers, 'brake', false);
+    this.customModel = true;
+    this.setXray(this.xray);
+    this.setExplode(this.explode);
+    this.applyHealth(this.slotHealth);
   }
 
   applyHealth(slotHealth) {
@@ -102,8 +141,8 @@ export class Viewer {
       g.userData.material.color.set(color);
       g.userData.baseColor = new THREE.Color(color);
       g.userData.blink = !!h?.blink;
-      g.visible = !!h; // only parts that exist on this vehicle
     }
+    this.applyVisibility(); // only parts that exist on this vehicle
     this.highlight();
   }
 
@@ -115,12 +154,28 @@ export class Viewer {
     bodyMat.opacity = on ? 0.13 : 0.96;
     bodyMat.depthWrite = !on;
     glassMat.opacity = on ? 0.08 : 0.35;
+    for (const x of this.model.body.userData.custom || []) {
+      x.m.transparent = on ? true : x.transparent;
+      x.m.opacity = on ? Math.min(x.opacity, 1) * 0.12 : x.opacity;
+      x.m.depthWrite = on ? false : x.depthWrite;
+      x.m.needsUpdate = true;
+    }
     this.model.body.visible = true;
+    this.applyVisibility();
+  }
+
+  // With the user's own model in solid view, show only the parts mapped onto
+  // it (wheels, calipers); the app's drawn parts would poke through the body.
+  applyVisibility() {
+    if (!this.model) return;
+    const solid = this.customModel && !this.xray && this.model.body.visible;
+    for (const [name, g] of this.model.slots) g.visible = !!this.slotHealth.get(name) && (!solid || !!g.userData.custom);
   }
 
   setBodyVisible(v) {
     this.dirty = true;
     if (this.model) this.model.body.visible = v;
+    this.applyVisibility();
   }
 
   setExplode(f) {
@@ -191,7 +246,7 @@ export class Viewer {
     this.raycaster.setFromCamera(this.pointer, this.camera);
     const targets = [];
     for (const g of this.model.slots.values()) if (g.visible) targets.push(...g.children);
-    const hit = this.raycaster.intersectObjects(targets, false)[0];
+    const hit = this.raycaster.intersectObjects(targets, true)[0];
     return hit?.object.userData.slot || null;
   }
 
