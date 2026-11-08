@@ -7,10 +7,11 @@ import { LEVELS } from '../data/health.js';
 // 3D viewer: orbit/zoom, tap to select a part slot, health colors,
 // blinking for red, x-ray body and exploded view.
 export class Viewer {
-  constructor(container, { onSelect, onHover } = {}) {
+  constructor(container, { onSelect, onHover, onHold } = {}) {
     this.container = container;
     this.onSelect = onSelect;
     this.onHover = onHover;
+    this.onHold = onHold;
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
@@ -59,11 +60,30 @@ export class Viewer {
 
     const el = this.renderer.domElement;
     let down = null;
-    el.addEventListener('pointerdown', (e) => (down = { x: e.clientX, y: e.clientY }));
+    // Tap selects a part. Press and hold (about 0.6 s, no drag) opens the check menu.
+    const HOLD_MS = 600;
+    const cancelHold = () => { clearTimeout(this.holdTimer); this.holdTimer = null; this.hideRing(); };
+    el.addEventListener('pointerdown', (e) => {
+      down = { x: e.clientX, y: e.clientY, held: false };
+      cancelHold();
+      const s = this.slotAt(e);
+      if (!s || !this.onHold) return;
+      this.showRing(e.clientX, e.clientY);
+      this.holdTimer = setTimeout(() => {
+        if (!down) return;
+        down.held = true;
+        this.hideRing();
+        navigator.vibrate?.(15);
+        this.onHold(s, e.clientX, e.clientY);
+      }, HOLD_MS);
+    });
     el.addEventListener('pointerup', (e) => {
-      if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) < 6) this.pick(e);
+      cancelHold();
+      if (down && !down.held && Math.hypot(e.clientX - down.x, e.clientY - down.y) < 6) this.pick(e);
       down = null;
     });
+    el.addEventListener('pointercancel', () => { cancelHold(); down = null; });
+    el.addEventListener('pointermove', (e) => { if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) >= 6) cancelHold(); });
     el.addEventListener('pointermove', (e) => {
       if (e.pointerType !== 'mouse') return;
       const s = this.slotAt(e);
@@ -254,6 +274,21 @@ export class Viewer {
     const s = this.slotAt(e);
     this.select(s);
     this.onSelect?.(s);
+  }
+
+  // Small filling ring under the finger while a press-and-hold is counting.
+  showRing(x, y) {
+    this.hideRing();
+    const r = document.createElement('div');
+    r.className = 'hold-ring';
+    r.style.left = `${x}px`;
+    r.style.top = `${y}px`;
+    document.body.appendChild(r);
+    this.ringEl = r;
+  }
+  hideRing() {
+    this.ringEl?.remove();
+    this.ringEl = null;
   }
 
   label(slot) {

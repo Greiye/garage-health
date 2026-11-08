@@ -8,7 +8,7 @@ import { openRotation } from './rotation.js';
 import { vehicleCatalog } from '../data/repo.js';
 import { pnHTML } from './catalogView.js';
 
-export const chip = (level, extra = '') => `<span class="chip lv-${level}">${LEVELS[level].label}${extra}</span>`;
+export const chip = (level, extra = '', label) => `<span class="chip lv-${level}">${esc(label || LEVELS[level].label)}${extra}</span>`;
 export const dot = (level, blink) => `<span class="dot lv-${level} ${blink ? 'blink' : ''}"></span>`;
 
 export function renderSlot(app, el, slot) {
@@ -25,7 +25,7 @@ export function partRow(app, p) {
   const h = app.st.health.get(p.id);
   const c = app.st.component.get(p.id);
   const sub = h.reasons[0]?.text || (c?.brand ? `${c.brand} ${c.model || ''}` : 'No data yet');
-  return `<li class="row-item" data-part="${p.id}">${dot(h.level, h.blink)}<div class="grow"><div>${esc(p.name)}</div><div class="muted small">${esc(sub)}</div></div>${chip(h.level)}</li>`;
+  return `<li class="row-item" data-part="${p.id}">${dot(h.level, h.blink)}<div class="grow"><div>${esc(p.name)}</div><div class="muted small">${esc(sub)}</div></div>${chip(h.level, '', h.levelLabel)}</li>`;
 }
 
 export async function renderPart(app, el, partId) {
@@ -51,7 +51,7 @@ export async function renderPart(app, el, partId) {
   el.innerHTML = `
   <div class="panel-head"><button class="icon-btn" data-back aria-label="Back">←</button>
     <div class="grow"><h2>${esc(p.name)}</h2><div class="muted small">${esc(p.system)}${p.position ? ` · ${esc(CORNER_NAME[p.position] || p.position)}` : ''}</div></div>
-    ${chip(h.level, h.blink ? ' ●' : '')}</div>
+    ${chip(h.level, h.blink ? ' ●' : '', h.levelLabel)}</div>
 
   ${h.reasons.length ? `<ul class="reasons">${h.reasons.map((r) => `<li>${dot(r.level)} ${esc(r.text)}</li>`).join('')}</ul>` : ''}
   ${p.notes ? `<p class="note">${esc(p.notes)}</p>` : ''}
@@ -280,7 +280,7 @@ function catalogFor(vehicle, p) {
   return `<details class="sys"><summary><span class="grow">Parts, fluids & gaskets</span><span class="muted small">${items.length}</span></summary><ul class="list compact">${items.map((c) => `<li class="row-item"><div class="grow"><div>${esc(c.name)}${c.qty > 1 ? ` ×${c.qty}` : ''}</div>${c.spec ? `<div class="small">${esc(c.spec)}</div>` : ''}${c.capacity ? `<div class="small muted">Capacity: ${esc(c.capacity)}</div>` : ''}${c.pns?.length ? `<div class="pns">${pnHTML(c.pns)}</div>` : ''}${c.fab ? `<div class="small muted">Make it: ${esc(c.fab)}</div>` : ''}</div></li>`).join('')}</ul></details>`;
 }
 
-function openWatch(app, p) {
+export function openWatch(app, p) {
   modal("Couldn't fully check", `<form class="form"><p class="small muted">${esc(p.name)} turns yellow (Watch) until you do a full Checked OK or replace it. It doesn't reset the inspection schedule.</p>
     <label>What's left to check, or the tool you need<input name="note" placeholder="e.g. need a borescope" autofocus></label>
     <div class="row end"><button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="submit">Mark as Watch</button></div></form>`, {

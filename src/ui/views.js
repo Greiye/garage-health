@@ -25,7 +25,7 @@ export function renderHealth(app, el) {
   const filter = app.healthFilter || '';
 
   el.innerHTML = `${healthSeg(app)}
-    <div class="summary">${['red', 'orange', 'yellow', 'green', 'unknown'].map((l) => `<button class="sum lv-${l} ${filter === l ? 'on' : ''}" data-filter="${l}"><b>${counts[l]}</b><span>${LEVELS[l].label}</span></button>`).join('')}</div>
+    <div class="summary">${['red', 'orange', 'yellow', 'green', 'unknown'].map((l) => `<button class="sum lv-${l} ${filter === l ? 'on' : ''}" data-filter="${l}"><b>${counts[l]}</b><span>${l === 'orange' ? 'Needs inspection or service' : LEVELS[l].label}</span></button>`).join('')}</div>
     <div class="actions"><button class="btn primary" data-act="log">Log service</button><button class="btn" data-act="rotate">Rotate tires</button></div>
     ${filter ? `<section><div class="sec-head"><h3>${LEVELS[filter].label}</h3><button class="btn small" data-filter="">Clear</button></div><ul class="list">${parts.filter((p) => st.health.get(p.id).level === filter).sort((a, b) => rank(b) - rank(a)).map((p) => partRow(app, p)).join('') || '<li class="muted">None</li>'}</ul></section>` : `
     <section><h3>Needs attention</h3>${attention.length ? `<ul class="list">${attention.map((p) => partRow(app, p)).join('')}</ul>` : '<p class="muted small">Nothing overdue or due soon.</p>'}</section>

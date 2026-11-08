@@ -276,3 +276,14 @@ body.stage-hidden .show-model { display: block; position: fixed; right: max(12px
 .tag-inspect { color: var(--muted); }
 .tag-life { color: var(--yellow); }
 .sched .btn { align-self: center; white-space: nowrap; }
+
+/* Press and hold on the 3D model */
+.hold-ring { position: fixed; width: 46px; height: 46px; margin: -23px 0 0 -23px; border-radius: 50%; border: 3px solid var(--accent); border-right-color: transparent; pointer-events: none; z-index: 60; animation: holdspin 0.6s linear forwards; }
+@keyframes holdspin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.hold-menu-wrap { position: fixed; inset: 0; z-index: 70; background: rgba(0,0,0,0.25); }
+.hold-menu { position: fixed; width: 300px; max-height: 60vh; overflow: auto; background: var(--card, #1b1f29); border: 1px solid var(--line, #2a3140); border-radius: 12px; padding: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.4); }
+.hold-list { list-style: none; margin: 8px 0; padding: 0; }
+.hold-row { padding: 7px 0; border-bottom: 1px solid var(--line); }
+.hold-name { font-size: .92rem; margin-bottom: 5px; }
+.hold-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.hold-btns .btn { white-space: nowrap; }

@@ -1,3 +1,4 @@
+import { openHoldMenu } from './ui/holdMenu.js';
 import './styles.css';
 import { db } from './data/db.js';
 import { currentVehicleId, loadVehicleState } from './data/repo.js';
@@ -142,6 +143,7 @@ async function boot() {
   try { await navigator.storage?.persist?.(); } catch {}
   const tip = $('#tip');
   app.viewer = new Viewer($('#stage'), {
+    onHold: (slot, x, y) => openHoldMenu(app, slot, x, y),
     onSelect: (slot) => {
       if (!slot) return app.tab === 'part' || app.tab === 'slot' ? app.showTab('health') : null;
       const sh = app.st.slotHealth.get(slot);

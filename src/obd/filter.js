@@ -6,9 +6,12 @@
 export const LIMITS = {
   coolant: { min: -40, max: 260, rate: 5 }, // °F per second
   voltage: { min: 0, max: 18, rate: 1 }, // V per second
+  // Fuel trims: a real trim moves a few percent over seconds, never 20 in one sample.
+  ltft1: { min: -30, max: 30, rate: 20 }, ltft2: { min: -30, max: 30, rate: 20 },
+  stft1: { min: -30, max: 30, rate: 20 }, stft2: { min: -30, max: 30, rate: 20 },
 };
 // Seconds a condition must hold before its alert shows, per channel.
-export const HOLD_S = { coolant: 10, voltage: 5 };
+export const HOLD_S = { coolant: 10, voltage: 5, ltft1: 10, ltft2: 10, stft1: 5, stft2: 5 };
 const DEFAULT_HOLD = 3;
 // After a gap this long, the next reading is taken as new (no rate check).
 const RESET_GAP = 10;

@@ -10,7 +10,9 @@ export const LEVELS = {
   unknown: { label: 'No data', color: '#64748b', rank: -1 },
   green: { label: 'Good', color: '#22c55e', rank: 0 },
   yellow: { label: 'Watch', color: '#eab308', rank: 1 },
-  orange: { label: 'Due soon', color: '#f97316', rank: 2 },
+  orange: { label: 'Needs inspection', color: '#f97316', rank: 2 },
+  // Orange from a replacement coming up (not an inspection)
+  service_soon: { label: 'Service due soon' },
   red: { label: 'Overdue / bad', color: '#ef4444', rank: 3 },
 };
 
@@ -137,7 +139,11 @@ export function partHealth(part, ctx) {
 
   const level = levelFor(worst);
   reasons.sort((a, b) => (b.frac ?? -1) - (a.frac ?? -1));
-  return { frac: worst, level, blink: level === 'red', reasons };
+  // Orange from a replacement coming up reads "Service due soon", not "Needs inspection".
+  const orange = reasons.filter((r) => r.level === 'orange');
+  const serviceOnly = level === 'orange' && orange.length > 0 && orange.every((r) => /service/i.test(r.text));
+  const levelLabel = serviceOnly ? LEVELS.service_soon.label : LEVELS[level].label;
+  return { frac: worst, level, levelLabel, blink: level === 'red', reasons };
 }
 
 const fmt = (n) => Math.round(n).toLocaleString();

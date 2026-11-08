@@ -5,9 +5,18 @@ import { db, todayISO } from '../data/db.js';
 import { saveService } from '../data/repo.js';
 import { MODES } from '../data/schedule.js';
 import { monthsBetween } from '../data/health.js';
+import { WATCH_CODE } from '../data/repo.js';
 import { esc, fmtMi, fmtDate, toast } from './util.js';
 
 const DAY = 864e5;
+
+// Parts marked Watch (partly checked): listed here until a full check or replacement.
+function watchHTML(app) {
+  const st = app.st;
+  const rows = st.flags.filter((f) => f.active && f.code === WATCH_CODE).map((f) => ({ f, p: st.allParts.find((x) => x.id === f.partId) })).filter((x) => x.p);
+  if (!rows.length) return '';
+  return `<section><h3>Watch <span class="muted small">${rows.length}</span></h3><ul class="list">${rows.map(({ f, p }) => `<li class="row-item sched" data-part="${p.id}"><span class="dot lv-yellow"></span><div class="grow"><div>${esc(p.name)}</div><div class="small txt-orange">${esc(f.text)}</div></div><span>›</span></li>`).join('')}</ul></section>`;
+}
 const addMonths = (iso, m) => { const d = new Date(iso + 'T12:00:00'); d.setMonth(d.getMonth() + m); return d; };
 
 // Average miles per month from odometer history (needs 2 readings 2+ weeks apart).
@@ -65,7 +74,7 @@ export function buildTasks(st, mpm) {
 }
 
 const GROUPS = [
-  ['overdue', 'Overdue'], ['soon', 'Due in the next month'], ['pastlife', 'Past typical life (inspect, plan replacement)'], ['next6', 'Next 6 months'], ['later', 'Later'], ['lifelater', 'Typical life (no factory interval)'], ['never', 'No history yet'],
+  ['overdue', 'Overdue'], ['soon', 'Needs inspection or service in the next month'], ['pastlife', 'Past typical life (inspect, plan replacement)'], ['next6', 'Next 6 months'], ['later', 'Later'], ['lifelater', 'Typical life (no factory interval)'], ['never', 'No history yet'],
 ];
 const every = (iv) => [iv.im && `${iv.im.toLocaleString()} mi`, iv.mo && (iv.mo % 12 === 0 && iv.mo >= 12 ? `${iv.mo / 12} yr` : `${iv.mo} mo`)].filter(Boolean).join(' / ');
 
@@ -95,6 +104,7 @@ export async function renderSchedule(app, el, header = '') {
   const assumed = mpm ?? 1000;
   const tasks = buildTasks(st, assumed);
   const counts = Object.fromEntries(GROUPS.map(([k]) => [k, tasks.filter((t) => t.status === k).length]));
+  counts.soon = tasks.filter((t) => t.status === 'soon').length;
   const showLater = app.schedShowLater;
   el.innerHTML = `${header}
     <section class="card">
@@ -104,8 +114,15 @@ export async function renderSchedule(app, el, header = '') {
       <p class="muted small">Whichever comes first, miles or time. Dates are projected from ${mpm ? `your average of ${Math.round(mpm).toLocaleString()} mi/month` : 'an assumed 1,000 mi/month (update the odometer now and then to use your real average)'}.
       Replace items go red and blink when overdue; inspections and leak checks go orange; parts past their typical life (no factory interval, like gaskets) go yellow. Ford's SN95 Mustang schedule is used where Ford gives an interval, and general guidance for the rest (approximate). Change any part's interval under its Intervals &amp; limits.</p>
     </section>
+    ${watchHTML(app)}
     ${GROUPS.map(([k, label]) => {
       if (!counts[k]) return '';
+      if (k === 'soon') {
+        const svc = tasks.filter((t) => t.status === 'soon' && t.kind !== 'inspect');
+        const ins = tasks.filter((t) => t.status === 'soon' && t.kind === 'inspect');
+        const grp = (title, list) => list.length ? `<h3>${title} <span class="muted small">${list.length}</span></h3><ul class="list">${list.map(taskRow).join('')}</ul>` : '';
+        return `<section>${grp('Needs inspection', ins)}${grp('Service due soon', svc)}</section>`;
+      }
       if ((k === 'later' || k === 'never' || k === 'lifelater') && !showLater) return `<section><button class="btn small" data-more="${k}">Show ${label.toLowerCase()} (${counts[k]})</button></section>`;
       return `<section><h3>${label} <span class="muted small">${counts[k]}</span></h3><ul class="list">${tasks.filter((t) => t.status === k).map(taskRow).join('')}</ul></section>`;
     }).join('')}`;
