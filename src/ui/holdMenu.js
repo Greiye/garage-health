@@ -6,7 +6,8 @@ import { openWatch } from './partPanel.js';
 // Press and hold on a part of the 3D model: Checked OK / Watch / Open, per part in that spot.
 export function openHoldMenu(app, slot, x, y) {
   const st = app.st;
-  const parts = st.parts.filter((p) => p.slot === slot);
+  // Same membership as the health view (includes parts that also sit in this spot).
+  const parts = st.slotHealth.get(slot)?.parts || [];
   if (!parts.length) return;
   const odo = st.vehicle.odometer;
   const rows = parts.map((p) => `<li class="hold-row">
