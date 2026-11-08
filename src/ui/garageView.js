@@ -1,4 +1,4 @@
-import { getCustomModel, saveCustomModel, removeCustomModel } from '../scene/customModel.js';
+import { getCustomModel, saveCustomModel, removeCustomModel, placeholderFor } from '../scene/customModel.js';
 import { syncCardHTML, onSyncClick, openSyncSetup } from './syncView.js';
 import { db, setSetting, exportBackup, importBackup, todayISO } from '../data/db.js';
 import { createVehicle, applyOptions, setOdometer } from '../data/repo.js';
@@ -24,9 +24,9 @@ export async function renderGarage(app, el) {
   </section>
 
   <section class="card"><h3>3D model</h3>
-    <p class="small">${cm ? `Using <b>${esc(cm.name)}</b> (${(cm.size / 1048576).toFixed(1)} MB). Wheels show tire health, calipers show brake health; tap X-ray to see every other part inside.` : 'Using the built-in model.'}</p>
+    <p class="small">${cm ? `Using <b>${esc(cm.name)}</b> (${(cm.size / 1048576).toFixed(1)} MB). Wheels show tire health, calipers show brake health; tap X-ray to see every other part inside.` : placeholderFor(v) ? 'Using the placeholder Mustang model until you import your own.' : 'Using the built-in model.'}</p>
     <p class="muted small">Load your own .glb model for this vehicle. It's saved on this device only: not synced, not in backups, so import it on each device. Front, size and wheels are fitted automatically.</p>
-    <div class="actions"><label class="btn file-btn">${cm ? 'Replace model' : 'Use my own 3D model'}<input type="file" accept=".glb,model/gltf-binary,application/octet-stream" data-model hidden></label>${cm ? '<button class="btn" data-act="model-reset">Use built-in model</button>' : ''}</div>
+    <div class="actions"><label class="btn file-btn">${cm ? 'Replace model' : 'Use my own 3D model'}<input type="file" accept=".glb,model/gltf-binary,application/octet-stream" data-model hidden></label>${cm ? `<button class="btn" data-act="model-reset">${placeholderFor(v) ? 'Use placeholder model' : 'Use built-in model'}</button>` : ''}</div>
   </section>
 
   <section class="card"><div class="sec-head"><h3>Odometer</h3><button class="btn small" data-act="odo">Update</button></div>
@@ -60,7 +60,7 @@ export async function renderGarage(app, el) {
     if (a === 'add') openVehicleWizard(app);
     if (a === 'edit') openVehicleEdit(app);
     if (a === 'odo') openOdometer(app);
-    if (a === 'model-reset') { await removeCustomModel(v.id); app.viewer.setVehicle(v.options, v.bodyColor, v.id); toast('Built-in model'); return renderGarage(app, el); }
+    if (a === 'model-reset') { await removeCustomModel(v.id); app.viewer.setVehicle(v.options, v.bodyColor, v); toast('Built-in model'); return renderGarage(app, el); }
     if (a === 'custom') openCustomPart(app);
     if (a === 'export') { download(await exportBackup(), `garage-health-backup-${todayISO()}.json`); toast('Backup exported'); }
     if (a === 'delete') {
@@ -77,7 +77,7 @@ export async function renderGarage(app, el) {
     toast('Loading model…');
     try {
       await saveCustomModel(v.id, f);
-      app.viewer.setVehicle(v.options, v.bodyColor, v.id);
+      app.viewer.setVehicle(v.options, v.bodyColor, v);
       toast(`3D model saved on this device (${(f.size / 1048576).toFixed(1)} MB)`);
     } catch (err) { toast(err.message, 6000); }
     renderGarage(app, el);

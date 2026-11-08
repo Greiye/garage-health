@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { buildVehicle } from './carModel.js';
-import { loadCustomScene, fitCustomModel } from './customModel.js';
+import { loadModelScene, fitCustomModel } from './customModel.js';
 import { LEVELS } from '../data/health.js';
 
 // 3D viewer: orbit/zoom, tap to select a part slot, health colors,
@@ -101,13 +101,14 @@ export class Viewer {
     this.renderer.setAnimationLoop(() => this.tick());
   }
 
-  setVehicle(options, bodyColor, vehicleId) {
+  setVehicle(options, bodyColor, vehicle) {
     if (this.model) this.scene.remove(this.model.root);
     this.customModel = false;
+    this.modelKind = null;
     this.model = buildVehicle(options, bodyColor);
     const token = (this.buildToken = (this.buildToken || 0) + 1);
-    if (vehicleId != null) {
-      loadCustomScene(vehicleId).then((sc) => { if (sc && token === this.buildToken) this.useCustomModel(sc, bodyColor); })
+    if (vehicle?.id != null) {
+      loadModelScene(vehicle).then((m) => { if (m && token === this.buildToken) this.useCustomModel(m.scene, bodyColor, m.kind); })
         .catch((e) => { console.error(e); this.onModelError?.(e); });
     }
     this.scene.add(this.model.root);
@@ -122,7 +123,7 @@ export class Viewer {
   // Swap the drawn body for the user's model. Its wheels and calipers join the
   // tire and brake slots (health colors, tap to open); all other app parts stay
   // inside the body for x-ray.
-  useCustomModel(scene, bodyColor) {
+  useCustomModel(scene, bodyColor, kind = 'custom') {
     const m = this.model;
     const fit = fitCustomModel(scene, m.dims, bodyColor);
     for (const c of [...m.body.children]) c.visible = false;
@@ -146,6 +147,7 @@ export class Viewer {
     join(fit.wheels, 'tire', true);
     join(fit.calipers, 'brake', false);
     this.customModel = true;
+    this.modelKind = kind;
     this.setXray(this.xray);
     this.setExplode(this.explode);
     this.applyHealth(this.slotHealth);

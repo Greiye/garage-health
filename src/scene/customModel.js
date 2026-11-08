@@ -21,6 +21,25 @@ export async function saveCustomModel(vehicleId, file) {
   return rec;
 }
 
+// Placeholder for the 2001 Mustang until the user imports their own model.
+const PLACEHOLDER = `${import.meta.env.BASE_URL}models/placeholder-mustang.glb`;
+export const placeholderFor = (vehicle) => (vehicle?.presetId || '').startsWith('mustang-2001');
+let placeholderGltf = null;
+async function loadPlaceholder() {
+  if (!placeholderGltf) {
+    const buf = await (await fetch(PLACEHOLDER)).arrayBuffer();
+    placeholderGltf = await new Promise((res, rej) => new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).parse(buf, '', res, rej));
+  }
+  return placeholderGltf.scene.clone(true);
+}
+// The model to draw for this vehicle: the user's own, else the placeholder (Mustang only), else null.
+export async function loadModelScene(vehicle) {
+  const own = await loadCustomScene(vehicle.id);
+  if (own) return { scene: own, kind: 'custom' };
+  if (placeholderFor(vehicle)) return { scene: await loadPlaceholder(), kind: 'placeholder' };
+  return null;
+}
+
 const cache = new Map(); // vehicleId -> { addedAt, gltf }
 async function parse(blob) {
   const buf = await blob.arrayBuffer();
