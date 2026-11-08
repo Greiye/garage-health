@@ -257,3 +257,15 @@ canvas.chart { width: 100%; height: auto; background: var(--bg); border-radius: 
 .fs-large .gbar { align-self: stretch; margin: .4rem 10% 0; height: 10px; }
 .log-fs pre.log { flex: 1; margin: 0; max-height: none; overflow: auto; font-size: .78rem; white-space: pre-wrap; }
 .adapter-log .row { gap: .3rem; margin: .3rem 0; }
+
+/* 3D model: minimized floating window / hidden */
+.mini-ctl, .show-model { display: none; }
+body.stage-mini .layout, body.stage-hidden .layout { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+body.stage-mini .panel, body.stage-hidden .panel { border: 0; }
+body.stage-mini .stage { position: fixed; right: max(12px, env(safe-area-inset-right)); bottom: max(12px, env(safe-area-inset-bottom)); width: min(340px, 46vw); height: min(240px, 28vh); z-index: 50; border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 8px 28px rgba(0,0,0,.35); }
+body.stage-mini .stage-tools, body.stage-mini .legend { display: none; }
+body.stage-mini .mini-ctl { display: flex; position: absolute; top: 4px; right: 4px; z-index: 2; gap: 2px; background: color-mix(in srgb, var(--card) 85%, transparent); border: 1px solid var(--line); border-radius: 999px; }
+body.stage-mini .mini-ctl .icon-btn { font-size: .95rem; padding: .15rem .45rem; color: var(--text); }
+body.stage-mini .panel-body { padding-bottom: calc(min(240px, 28vh) + 24px); }
+body.stage-hidden .stage { display: none; }
+body.stage-hidden .show-model { display: block; position: fixed; right: max(12px, env(safe-area-inset-right)); bottom: max(12px, env(safe-area-inset-bottom)); z-index: 50; background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: 999px; padding: .5rem .9rem; font-weight: 600; box-shadow: 0 6px 20px rgba(0,0,0,.3); cursor: pointer; }

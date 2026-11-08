@@ -123,10 +123,13 @@ function shell() {
         <label class="slider">Explode <input type="range" id="explode" min="0" max="1" step="0.01" value="0"></label>
         <button class="icon-btn" id="reset" title="Reset view">⟲</button>
         <button class="icon-btn only-mobile" id="expand" title="Bigger model">⤢</button>
+        <button class="icon-btn" id="minimize" title="Shrink the model to a small window">▁</button>
       </div>
+      <div class="mini-ctl"><button class="icon-btn" data-stage="full" title="Full size">⤢</button><button class="icon-btn" data-stage="hidden" title="Hide model">✕</button></div>
       <div class="legend">${['green', 'yellow', 'orange', 'red', 'unknown'].map((l) => `<span><i class="dot lv-${l} ${l === 'red' ? 'blink' : ''}"></i>${LEVELS[l].label}</span>`).join('')}</div>
       <div class="tooltip" id="tip" hidden></div>
     </section>
+    <button class="show-model" id="show-model" title="Show the 3D model">▣ 3D</button>
     <aside id="panel" class="panel">
       <nav class="tabs">${TABS.map(([k, label, ic]) => `<button data-tab="${k}"><span class="ic">${ic}</span>${label}</button>`).join('')}</nav>
       <div id="panel-body" class="panel-body"></div>
@@ -160,6 +163,20 @@ async function boot() {
   $('#explode').oninput = (e) => app.viewer.setExplode(+e.target.value);
   $('#reset').onclick = () => app.viewer.resetView();
   $('#expand').onclick = () => document.body.classList.toggle('stage-big');
+  // 3D model size: full, mini (floating window bottom-right) or hidden. Remembered on this device.
+  const setStage = (mode) => {
+    document.body.classList.toggle('stage-mini', mode === 'mini');
+    document.body.classList.toggle('stage-hidden', mode === 'hidden');
+    if (mode !== 'full') document.body.classList.remove('stage-big');
+    try { localStorage.setItem('stageMode', mode); } catch {}
+    requestAnimationFrame(() => app.viewer?.resize?.());
+  };
+  $('#minimize').onclick = () => setStage('mini');
+  document.querySelector('.mini-ctl').onclick = (e) => { const b = e.target.closest('[data-stage]'); if (b) setStage(b.dataset.stage); };
+  $('#show-model').onclick = () => setStage('mini');
+  let savedStage = 'full';
+  try { savedStage = localStorage.getItem('stageMode') || 'full'; } catch {}
+  setStage(savedStage);
   $('#odo-btn').onclick = () => app.st && openOdometer(app);
   $('#veh-btn').onclick = () => app.st && app.showTab('garage');
   $('#alert-count').onclick = () => { app.healthFilter = 'red'; app.showTab('health'); };
