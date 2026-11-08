@@ -191,7 +191,13 @@ export class Viewer {
   applyVisibility() {
     if (!this.model) return;
     const solid = this.customModel && !this.xray && this.model.body.visible;
-    for (const [name, g] of this.model.slots) g.visible = !!this.slotHealth.get(name) && (!solid || !!g.userData.custom);
+    for (const [name, g] of this.model.slots) {
+      const has = !!this.slotHealth.get(name);
+      const custom = !!g.userData.custom;
+      g.visible = has && (!solid || custom || g.children.some((c) => c.userData.proxy));
+      // In solid view with the user's model, only its own meshes and the tap targets show.
+      for (const c of g.children) c.visible = !(solid && !custom && !c.userData.proxy);
+    }
   }
 
   setBodyVisible(v) {
@@ -268,6 +274,11 @@ export class Viewer {
     this.raycaster.setFromCamera(this.pointer, this.camera);
     const targets = [];
     for (const g of this.model.slots.values()) if (g.visible) targets.push(...g.children);
+    // Brake tap targets first, so a press on the brake isn't taken by the tire in front.
+    const proxies = [];
+    for (const g of this.model.slots.values()) if (g.visible) for (const c of g.children) if (c.userData.proxy) proxies.push(c);
+    const ph = this.raycaster.intersectObjects(proxies, false)[0];
+    if (ph) return ph.object.userData.slot;
     const hit = this.raycaster.intersectObjects(targets, true)[0];
     return hit?.object.userData.slot || null;
   }

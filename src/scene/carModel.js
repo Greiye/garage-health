@@ -154,6 +154,13 @@ export function buildVehicle(opts, bodyColor = '#b0181f') {
     put(`hub_${k}`, `Hub ${k}`, cyl(0.07, 0.07, 0.12, 16), [x, ay, z - side * 0.2], RX);
     put(`brake_${k}`, `Brakes ${k}`, cyl(d.r - 0.12, d.r - 0.12, 0.028, 28), [x, ay, z - side * 0.14], RX);
     put(`brake_${k}`, `Brakes ${k}`, box(0.12, 0.16, 0.08), [x - 0.13, ay + 0.12, z - side * 0.15], [0, 0, 0.6]);
+    // Tap target for the brake spot: an invisible disc on the outer face of the wheel,
+    // so a press on the brake (not the tire) opens Brakes. Hit-tested first in the viewer.
+    const proxy = new THREE.Mesh(cyl(d.r * 0.42, d.r * 0.42, 0.05, 24), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }));
+    proxy.rotation.set(Math.PI / 2, 0, 0);
+    proxy.position.set(x, ay, z + side * (tireW * 0.5 + 0.03));
+    proxy.userData = { slot: `brake_${k}`, proxy: true };
+    slot(`brake_${k}`, `Brakes ${k}`).add(proxy);
   }
   if (opts.spare) put('spare', 'Spare tire', cyl(d.r - 0.04, d.r - 0.04, 0.16, 24), opts.bodyType === 'truck' ? [ra - 0.55, d.ride + 0.15, 0] : [-d.L / 2 + 0.55, d.ride + 0.28, 0], [0, 0, 0]);
 
