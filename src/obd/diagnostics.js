@@ -12,6 +12,7 @@
 // This narrows down causes; it does not prove a part has failed.
 
 import { VEHICLE_CATALOGS } from '../data/catalogs/index.js';
+import { cleanRows } from './filter.js';
 
 // ---------- Healthy ranges ----------
 export const GENERIC_RANGES = {
@@ -118,6 +119,9 @@ function switching(rows, ch) {
 export function analyze(rows, { vehicle, dtcs = [], minSamples = 8 } = {}) {
   const R = rangesFor(vehicle);
   rows = rows.filter((r) => r && r.t != null).sort((a, b) => a.t - b.t);
+  // Single impossible readings become gaps, so they can't raise a finding.
+  const cleaned = cleanRows(rows);
+  rows = cleaned.rows;
   const by = Object.fromEntries(Object.keys(STATES).map((k) => [k, []]));
   for (const r of rows) { const s = stateOf(r, R); if (s) by[s].push(r); }
   const enough = (st) => by[st].length >= minSamples;
@@ -432,6 +436,7 @@ export function analyze(rows, { vehicle, dtcs = [], minSamples = 8 } = {}) {
   return {
     ranges: R,
     samples: rows.length,
+    rejected: cleaned.rejected,
     sampleInterval: dt,
     stateCounts: Object.fromEntries(Object.entries(by).map(([k, v]) => [k, v.length])),
     checks,

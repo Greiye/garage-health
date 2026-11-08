@@ -30,7 +30,7 @@ export function diagnosisHTML(app, res, { compact = false } = {}) {
     ? `<table class="tbl small diag-checks"><tr><th></th><th>Check</th><th>When</th><th>Reading</th><th>Healthy</th></tr>${res.checks.map((c) => `<tr><td><span class="dot lv-${CHECK_DOT[c.status]}"></span></td><td>${esc(c.label)}</td><td class="muted">${esc(STATES[c.state] || '')}</td><td><b>${esc(c.display)}</b> ${esc(c.unit)}</td><td class="muted">${esc(c.rangeText)} ${esc(c.unit)}</td></tr>`).join('')}</table>`
     : '';
   return `
-    <p class="muted small">${res.samples} samples${res.sampleInterval ? ` · every ${res.sampleInterval.toFixed(1)} s` : ''}${states ? ` · ${esc(states)}` : ''}</p>
+    <p class="muted small">${res.samples} samples${res.sampleInterval ? ` · every ${res.sampleInterval.toFixed(1)} s` : ''}${states ? ` · ${esc(states)}` : ''}${res.rejected && Object.values(res.rejected).some(Boolean) ? ` · ${Object.values(res.rejected).reduce((a, b) => a + b, 0)} bad reading${Object.values(res.rejected).reduce((a, b) => a + b, 0) > 1 ? 's' : ''} ignored` : ''}</p>
     ${findingsHtml}
     ${checksHtml ? (compact ? `<details class="small"><summary>Healthy-range checks (${res.checks.length}${res.checks.filter((c) => c.status !== 'ok').length ? `, ${res.checks.filter((c) => c.status !== 'ok').length} out of range` : ''})</summary>${checksHtml}</details>` : `<h4>Healthy-range checks</h4>${checksHtml}`) : ''}
     ${res.coverage.length ? `<details class="small" ${res.findings.length || res.checks.length ? '' : 'open'}><summary>For a fuller diagnosis</summary><ul>${res.coverage.map((c) => `<li>${esc(c)}</li>`).join('')}</ul></details>` : ''}

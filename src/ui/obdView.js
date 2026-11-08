@@ -6,6 +6,7 @@ import { describeDtc, partsForDtc, dtcSeverity } from '../obd/dtc.js';
 import { parseObdCsv, summarize, downsample } from '../obd/csvImport.js';
 import { exportObdSessionCsv } from './csvExport.js';
 import { analyze, rangesFor } from '../obd/diagnostics.js';
+import { Screen, sustain, LIMITS } from '../obd/filter.js';
 import { scaleFor, zoneGradient, needlePct, zoneAt } from '../obd/scales.js';
 import { diagnosisHTML, onDiagClick } from './diagView.js';
 import { esc, fmtDate, toast, modal, confirmDialog } from './util.js';
@@ -28,7 +29,7 @@ async function saveDashConfig(vehicleId, cfg) {
 const pidsFor = (cfg) => [...ALWAYS_PIDS, ...cfg.gauges.filter((ch) => ch !== 'voltage').map((ch) => CH_PID[ch]).filter(Boolean)];
 
 // Connection state survives tab switches.
-const live = { buf: [], diag: null, dtcCodes: [], autoTried: new Set(), elm: null, transport: null, poller: null, sample: {}, recording: null, status: 'disconnected', info: null, log: [], alerts: new Map() };
+const live = { buf: [], diag: null, dtcCodes: [], autoTried: new Set(), elm: null, transport: null, poller: null, sample: {}, recording: null, status: 'disconnected', info: null, log: [], alerts: new Map(), screen: new Screen(), sustainState: new Map() };
 
 export async function renderObd(app, el) {
   const native = BluetoothTransport.available();
@@ -263,6 +264,8 @@ async function connect(app, el, transport, address, name) {
   live.status = 'connecting';
   live.log = [];
   live.buf = [];
+  live.screen.reset();
+  live.sustainState.clear();
   live.diag = null;
   renderObd(app, el);
   try {
@@ -312,13 +315,20 @@ function updateDiag(app) {
   if (body) body.innerHTML = diagnosisHTML(app, live.diag, { compact: true });
 }
 async function onSample(app, s) {
-  Object.assign(live.sample, s);
+  // Reject impossible readings (keep the last good value); alerts below need a sustained condition.
+  const t = s.t / 1000;
+  const good = {};
+  for (const [k, v] of Object.entries(s)) {
+    const x = live.screen.accept(k, v, t);
+    if (x !== null || !(k in LIMITS)) good[k] = x;
+  }
+  Object.assign(live.sample, good);
   // Rolling buffer for the live diagnosis: last 15 minutes, times in seconds.
-  live.buf.push({ ...live.sample, t: s.t / 1000 });
+  live.buf.push({ ...live.sample, t });
   while (live.buf.length > 4000 || (live.buf.length && live.buf.at(-1).t - live.buf[0].t > 900)) live.buf.shift();
   if (Date.now() - lastDiag > 15000) updateDiag(app);
   if (live.recording) live.recording.rows.push({ ...s, t: (s.t - live.recording.t0) / 1000 });
-  const hits = evaluate(live.sample);
+  const hits = sustain(live.sustainState, evaluate(live.sample), t);
   live.alertsByCh = {};
   for (const h of hits) {
     live.alerts.set(h.code, h);

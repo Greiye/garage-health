@@ -154,9 +154,20 @@ export const resolveFlag = (id) => db.flags.update(id, { active: 0, resolvedAt: 
 
 // Saves a service entry. replacements: [{ partId, component: {...} }]
 // Replacing a part closes the current component and installs a new one.
+// A part marked "Watch" (partly checked) stays yellow until a full inspection
+// or a replacement is logged for it.
+export const WATCH_CODE = 'watch:inspect';
+export const addWatch = (vehicleId, partId, note) => addFlag({ vehicleId, partId, source: 'inspection', severity: 'watch', text: `Couldn't fully check${note ? `: ${note}` : ''}`, code: WATCH_CODE });
+
 export async function saveService(entry, { replacements = [], files = [] } = {}) {
   const { id: existingId, ...data } = entry;
   const id = existingId ? (await db.services.update(existingId, data), existingId) : await db.services.add(data);
+  if (entry.type === 'Inspection' || entry.type === 'Maintenance') {
+    for (const partId of entry.partIds || []) {
+      const ws = await db.flags.where({ vehicleId: entry.vehicleId, partId }).filter((f) => f.active && f.code === WATCH_CODE).toArray();
+      for (const f of ws) await resolveFlag(f.id);
+    }
+  }
   for (const r of replacements) {
     const old = await db.components.where({ partId: r.partId }).filter((c) => !c.removedDate).toArray();
     for (const c of old) await db.components.update(c.id, { removedDate: entry.date, removedMiles: entry.miles, removedServiceId: id });

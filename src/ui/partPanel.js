@@ -1,6 +1,6 @@
 import { db, todayISO } from '../data/db.js';
 import { LEVELS, FLAG_SEVERITY, SOURCE_LABEL, monthsBetween } from '../data/health.js';
-import { addFlag, resolveFlag, saveService, addMeasurement, ensureComponent } from '../data/repo.js';
+import { addFlag, resolveFlag, saveService, addMeasurement, ensureComponent, addWatch } from '../data/repo.js';
 import { CORNER_NAME } from '../data/templates.js';
 import { esc, fmtMi, fmtDate, fmtMoney, modal, num, toast, blobURL, confirmDialog } from './util.js';
 import { openServiceForm, componentFieldsHTML, readComponentFields } from './serviceForm.js';
@@ -62,6 +62,7 @@ export async function renderPart(app, el, partId) {
     <button class="btn" data-act="replace">Replaced it</button>
     ${p.im || p.mo ? '<button class="btn" data-act="quick">Done today</button>' : ''}
     ${p.inspect ? '<button class="btn" data-act="checked">Checked OK</button>' : ''}
+    ${p.inspect ? '<button class="btn" data-act="watch">Watch (couldn\'t fully check)</button>' : ''}
     ${ms ? `<button class="btn" data-act="measure">Add ${esc(ms.label.toLowerCase())}</button>` : ''}
     ${tire || p.key === 'rotation' ? '<button class="btn" data-act="rotate">Rotate tires</button>' : ''}
     <button class="btn warn" data-act="symptom">Report symptom</button>
@@ -132,6 +133,7 @@ export async function renderPart(app, el, partId) {
       toast(`${p.name} checked at ${fmtMi(odo)}`);
       return app.refresh();
     }
+    if (a === 'watch') return openWatch(app, p);
     if (a === 'measure') return openMeasure(app, p);
     if (a === 'rotate') return openRotation(app);
     if (a === 'symptom') return openSymptom(app, p);
@@ -276,4 +278,16 @@ function catalogFor(vehicle, p) {
   const items = vehicleCatalog(vehicle).filter((c) => c.parts.includes(p.key));
   if (!items.length) return '';
   return `<details class="sys"><summary><span class="grow">Parts, fluids & gaskets</span><span class="muted small">${items.length}</span></summary><ul class="list compact">${items.map((c) => `<li class="row-item"><div class="grow"><div>${esc(c.name)}${c.qty > 1 ? ` ×${c.qty}` : ''}</div>${c.spec ? `<div class="small">${esc(c.spec)}</div>` : ''}${c.capacity ? `<div class="small muted">Capacity: ${esc(c.capacity)}</div>` : ''}${c.pns?.length ? `<div class="pns">${pnHTML(c.pns)}</div>` : ''}${c.fab ? `<div class="small muted">Make it: ${esc(c.fab)}</div>` : ''}</div></li>`).join('')}</ul></details>`;
+}
+
+function openWatch(app, p) {
+  modal("Couldn't fully check", `<form class="form"><p class="small muted">${esc(p.name)} turns yellow (Watch) until you do a full Checked OK or replace it. It doesn't reset the inspection schedule.</p>
+    <label>What's left to check, or the tool you need<input name="note" placeholder="e.g. need a borescope" autofocus></label>
+    <div class="row end"><button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="submit">Mark as Watch</button></div></form>`, {
+    onSubmit: async (fd) => {
+      await addWatch(app.st.vehicle.id, p.id, String(fd.get('note') || '').trim());
+      toast(`${p.name} marked Watch`);
+      await app.refresh();
+    },
+  });
 }
