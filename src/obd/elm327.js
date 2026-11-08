@@ -193,7 +193,13 @@ export class DemoTransport {
   async connect() { this.address = 'DEMO'; }
   async disconnect() { this.address = null; }
   async send(cmd) {
-    await new Promise((r) => setTimeout(r, 25));
+    // A real ELM327 can't take overlapping commands; fail loudly if we try.
+    if (this.busy) throw new Error(`Overlapping command ${cmd} while ${this.busy} is running`);
+    this.busy = cmd;
+    try { return await this.reply(cmd); } finally { this.busy = null; }
+  }
+  async reply(cmd) {
+    await new Promise((r) => setTimeout(r, 25 + Math.random() * 40));
     const c = cmd.toUpperCase().replace(/\s/g, '');
     const t = (Date.now() - this.t0) / 1000;
     const hx = (n) => Math.max(0, Math.min(255, Math.round(n))).toString(16).toUpperCase().padStart(2, '0');
@@ -229,11 +235,28 @@ export class Elm327 {
     this.supported = new Set();
     this.protocol = '';
     this.isCan = false;
+    this.queue = Promise.resolve();
   }
-  async cmd(c, timeout) {
-    const r = await this.t.send(c, timeout);
+  // The ELM327 handles one command at a time: sending a second one while the
+  // first is running aborts it ("STOPPED") and confuses the reply routing.
+  // Every command goes through this queue so live polling, code reads and
+  // init never overlap.
+  cmd(c, timeout) {
+    const run = this.queue.then(() => this.exec(c, timeout));
+    this.queue = run.catch(() => {});
+    return run;
+  }
+  async exec(c, timeout, retry = true) {
+    let r;
+    try {
+      r = await this.t.send(c, timeout);
+    } catch (e) {
+      this.log(`> ${c}\n(${e.message || e})`);
+      throw e;
+    }
     const clean = r.replace(new RegExp('^' + c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*', 'i'), '').trim();
     this.log(`> ${c}\n${clean}`);
+    if (retry && /^(STOPPED|\?)$/i.test(clean)) return this.exec(c, timeout, false);
     return clean;
   }
   async init() {

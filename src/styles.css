@@ -255,3 +255,5 @@ canvas.chart { width: 100%; height: auto; background: var(--bg); border-radius: 
 .fs-bars .g-critical, .fs-bars .g-warn { border-width: 0 0 1px; animation: none; }
 .fs-bars .g-critical .gneedle { animation: blink .9s infinite; }
 .fs-large .gbar { align-self: stretch; margin: .4rem 10% 0; height: 10px; }
+.log-fs pre.log { flex: 1; margin: 0; max-height: none; overflow: auto; font-size: .78rem; white-space: pre-wrap; }
+.adapter-log .row { gap: .3rem; margin: .3rem 0; }

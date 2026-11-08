@@ -68,7 +68,9 @@ export async function renderObd(app, el) {
     </div>
     <div class="gauges">${live.cfg.gauges.map((ch) => gauge(ch)).join('')}</div>
     ${live.alerts.size ? `<ul class="list alerts">${[...live.alerts.values()].map((a) => `<li class="row-item"><span class="dot lv-${a.sev === 'critical' ? 'red' : a.sev === 'warn' ? 'orange' : 'yellow'}"></span>${esc(a.text)}</li>`).join('')}</ul>` : ''}
-    <details class="small"><summary>Adapter log</summary><pre class="log">${esc(live.log.slice(-60).join('\n'))}</pre></details>
+    <details class="small adapter-log" ${live.logOpen ? 'open' : ''}><summary>Adapter log <span class="muted">(${live.log.length})</span></summary>
+      <div class="row small"><button class="btn small" data-act="logfs">⛶ Full screen</button><button class="btn small" data-act="logcopy">Copy</button></div>
+      <pre class="log">${esc(live.log.slice(-60).join('\n'))}</pre></details>
   </section>
 
   ${live.buf.length || live.status === 'connected' ? `<section class="card" data-diag-card>
@@ -95,6 +97,8 @@ export async function renderObd(app, el) {
   </section>`;
 
   el.onclick = (e) => onClick(app, el, e);
+  const lg = el.querySelector('.adapter-log');
+  lg.ontoggle = () => { live.logOpen = lg.open; };
   el.querySelector('[data-rate]').onchange = (e) => saveDashConfig(app.st.vehicle.id, { ...live.cfg, rateMs: +e.target.value });
   const auto = el.querySelector('[data-auto]');
   if (auto) auto.onchange = () => saveAdapter(app.st.vehicle.id, { ...saved, auto: auto.checked });
@@ -200,6 +204,8 @@ async function onClick(app, el, e) {
     if (act === 'serial') return connect(app, el, new WebSerialTransport(), +(el.querySelector('[data-baud]')?.value || 38400));
     if (act === 'disconnect') return disconnect(app, el);
     if (act === 'fullscreen') return openFullscreen(app);
+    if (act === 'logfs') return openLogFullscreen();
+    if (act === 'logcopy') { try { await navigator.clipboard.writeText(live.log.join('\n')); toast('Log copied'); } catch { toast('Copy failed'); } return; }
     if (act === 'rediag') { lastDiag = 0; return updateDiag(app); }
     if (act === 'gauges') return chooseGauges(app, el);
     if (act === 'record') {
@@ -266,7 +272,7 @@ async function connect(app, el, transport, address, name) {
       await saveAdapter(app.st.vehicle.id, { address: transport.address, name: name || (prev?.address === transport.address ? prev.name : '') || '', auto: prev?.auto !== false });
     }
     live.transport = transport;
-    live.elm = new Elm327(transport, (l) => live.log.push(l));
+    live.elm = new Elm327(transport, logLine);
     live.info = await live.elm.init();
     live.status = 'connected';
     live.alerts = new Map();
@@ -504,4 +510,39 @@ function updateFsAlerts() {
   const ul = document.querySelector('.obd-fs .fs-alerts');
   if (!ul) return;
   ul.innerHTML = [...live.alerts.values()].slice(-4).map((a) => `<li><span class="dot lv-${a.sev === 'critical' ? 'red blink' : a.sev === 'warn' ? 'orange' : 'yellow'}"></span>${esc(a.text)}</li>`).join('');
+}
+
+// ---------- Adapter log ----------
+function logLine(l) {
+  const ts = new Date().toLocaleTimeString([], { hour12: false });
+  live.log.push(l.replace(/^> /, `${ts} > `));
+  if (live.log.length > 3000) live.log.splice(0, live.log.length - 3000);
+  const pre = document.querySelector('#panel .obd-view .adapter-log[open] pre.log');
+  if (pre) pre.textContent = live.log.slice(-60).join('\n');
+  const fs = document.querySelector('.log-fs pre');
+  if (fs) {
+    const atBottom = fs.scrollHeight - fs.scrollTop - fs.clientHeight < 40;
+    fs.textContent = live.log.join('\n');
+    if (atBottom) fs.scrollTop = fs.scrollHeight;
+  }
+}
+
+function openLogFullscreen() {
+  document.querySelector('.log-fs')?.remove();
+  const ov = document.createElement('div');
+  ov.className = 'obd-fs log-fs';
+  ov.innerHTML = `<div class="fs-bar"><b>Adapter log</b><span class="muted small">${live.log.length} entries · newest at the bottom</span><span class="grow"></span>
+    <button class="btn small" data-copy>Copy</button><button class="btn small" data-clear>Clear</button><button class="btn small" data-exit>✕ Exit</button></div>
+    <pre class="log"></pre>`;
+  document.body.appendChild(ov);
+  const pre = ov.querySelector('pre');
+  pre.textContent = live.log.join('\n');
+  pre.scrollTop = pre.scrollHeight;
+  const exit = async () => { ov.remove(); document.removeEventListener('keydown', onKey); if (document.fullscreenElement) { try { await document.exitFullscreen(); } catch {} } };
+  const onKey = (e) => { if (e.key === 'Escape') exit(); };
+  document.addEventListener('keydown', onKey);
+  ov.querySelector('[data-exit]').onclick = exit;
+  ov.querySelector('[data-clear]').onclick = () => { live.log.length = 0; pre.textContent = ''; };
+  ov.querySelector('[data-copy]').onclick = async () => { try { await navigator.clipboard.writeText(live.log.join('\n')); toast('Log copied'); } catch { toast('Copy failed'); } };
+  ov.requestFullscreen?.().catch?.(() => {});
 }
