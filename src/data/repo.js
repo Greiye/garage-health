@@ -4,6 +4,7 @@ import { partHealth, worstLevel } from './health.js';
 import { buildInspection, buildTests, summarizeRun } from './inspection.js';
 import { buildCatalog, mergeCatalog } from './catalog.js';
 import { VEHICLE_CATALOGS } from './catalogs/index.js';
+import { withSchedule } from './schedule.js';
 
 // Virtual slots light several meshes at once.
 export const VIRTUAL_SLOTS = { tires: ['tire_FL', 'tire_FR', 'tire_RL', 'tire_RR'] };
@@ -73,11 +74,26 @@ export async function loadVehicleState(vehicleId) {
     db.flags.where({ vehicleId }).filter((f) => f.active).toArray(),
     db.inspections.where({ vehicleId }).toArray(),
   ]);
-  const visible = parts.filter((p) => !p.hidden);
+  // Apply the maintenance schedule. A stored interval that differs from the
+  // template default was edited by the user, so it counts as custom.
+  const defaults = new Map(buildPartList(vehicle.options || {}).map((d) => [d.key, d]));
+  const visible = parts.filter((p) => !p.hidden).map((p) => {
+    const d = defaults.get(p.key);
+    const custom = p.customInterval ?? (p.custom || (d && ((p.im || 0) !== (d.im || 0) || (p.mo || 0) !== (d.mo || 0))));
+    return withSchedule(vehicle, { ...p, customInterval: !!custom });
+  });
   const component = new Map();
   for (const c of components) if (!c.removedDate && c.partId != null) component.set(c.partId, c);
   const lastService = new Map();
+  // Last time each part was checked: Inspection-type log entries and passed
+  // inspection runs. Checks reset the inspect interval, not the replace one.
+  const checked = new Map();
+  const markChecked = (pid, date, miles) => {
+    const cur = checked.get(pid);
+    if (!cur || (date || '') > (cur.date || '')) checked.set(pid, { date, miles: miles ?? null });
+  };
   for (const s of services) {
+    if (s.type === 'Inspection') { for (const pid of s.partIds || []) markChecked(pid, s.date, s.miles); continue; }
     for (const pid of s.partIds || []) {
       if ((s.resets || []).length && !s.resets.includes(pid)) continue;
       const cur = lastService.get(pid);
@@ -93,9 +109,12 @@ export async function loadVehicleState(vehicleId) {
   const inspected = new Map();
   for (const r of inspections) {
     if (r.status !== 'done') continue;
-    for (const pid of r.passedParts || []) if (!inspected.has(pid) || inspected.get(pid) < r.date) inspected.set(pid, r.date);
+    for (const pid of r.passedParts || []) {
+      if (!inspected.has(pid) || inspected.get(pid) < r.date) inspected.set(pid, r.date);
+      markChecked(pid, r.date, r.miles);
+    }
   }
-  const ctx = { odometer: vehicle.odometer, today: todayISO(), lastService, component, flags: flagMap, inspected };
+  const ctx = { odometer: vehicle.odometer, today: todayISO(), lastService, component, flags: flagMap, inspected, checked };
   const health = new Map();
   for (const p of visible) health.set(p.id, partHealth(p, ctx));
 
@@ -117,7 +136,7 @@ export async function loadVehicleState(vehicleId) {
     const levels = ps.map((p) => health.get(p.id).level);
     slotHealth.set(s, { level: worstLevel(levels), blink: ps.some((p) => health.get(p.id).blink), parts: ps });
   }
-  return { vehicle, parts: visible, allParts: parts, components, services, flags, component, lastService, health, slotHealth, inspections };
+  return { vehicle, parts: visible, allParts: parts, components, services, flags, component, lastService, checked, health, slotHealth, inspections };
 }
 
 export async function addFlag({ vehicleId, partId, source = 'user', severity = 'warn', text, code }) {

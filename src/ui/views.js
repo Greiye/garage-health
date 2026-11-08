@@ -8,19 +8,23 @@ import { openServiceForm } from './serviceForm.js';
 import { openRotation } from './rotation.js';
 import { openBaseline } from './baseline.js';
 import { exportServicesCsv } from './csvExport.js';
+import { renderSchedule } from './scheduleView.js';
 
 // ---------- Health tab: what needs attention, then every system ----------
+const healthSeg = (app) => `<div class="seg wide">${[['parts', 'Parts health'], ['schedule', 'Maintenance schedule']].map(([k, l]) => `<button class="seg-b ${(app.healthView || 'parts') === k ? 'on' : ''}" data-hview="${k}">${l}</button>`).join('')}</div>`;
+
 export function renderHealth(app, el) {
+  if (app.healthView === 'schedule') return renderSchedule(app, el, healthSeg(app));
   const { st } = app;
   const parts = st.parts;
   const rank = (p) => st.health.get(p.id).frac ?? -1;
   const attention = parts.filter((p) => ['red', 'orange'].includes(st.health.get(p.id).level)).sort((a, b) => rank(b) - rank(a));
-  const unknown = parts.filter((p) => st.health.get(p.id).level === 'unknown' && (p.im || p.mo || p.age));
+  const unknown = parts.filter((p) => st.health.get(p.id).level === 'unknown' && (p.im || p.mo || p.age || p.inspect));
   const counts = Object.fromEntries(Object.keys(LEVELS).map((k) => [k, 0]));
   for (const p of parts) counts[st.health.get(p.id).level]++;
   const filter = app.healthFilter || '';
 
-  el.innerHTML = `
+  el.innerHTML = `${healthSeg(app)}
     <div class="summary">${['red', 'orange', 'yellow', 'green', 'unknown'].map((l) => `<button class="sum lv-${l} ${filter === l ? 'on' : ''}" data-filter="${l}"><b>${counts[l]}</b><span>${LEVELS[l].label}</span></button>`).join('')}</div>
     <div class="actions"><button class="btn primary" data-act="log">Log service</button><button class="btn" data-act="rotate">Rotate tires</button></div>
     ${filter ? `<section><div class="sec-head"><h3>${LEVELS[filter].label}</h3><button class="btn small" data-filter="">Clear</button></div><ul class="list">${parts.filter((p) => st.health.get(p.id).level === filter).sort((a, b) => rank(b) - rank(a)).map((p) => partRow(app, p)).join('') || '<li class="muted">None</li>'}</ul></section>` : `
@@ -35,6 +39,8 @@ export function renderHealth(app, el) {
     }).join('')}`}`;
 
   el.onclick = (e) => {
+    const hv = e.target.closest('[data-hview]');
+    if (hv) { app.healthView = hv.dataset.hview; return renderHealth(app, el); }
     const f = e.target.closest('[data-filter]');
     if (f) { app.healthFilter = f.dataset.filter === filter ? '' : f.dataset.filter; return renderHealth(app, el); }
     const pr = e.target.closest('[data-part]');

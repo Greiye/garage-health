@@ -79,6 +79,23 @@ export function partHealth(part, ctx) {
     reasons.push({ frac: null, level: 'unknown', text: 'No service recorded yet' });
   }
 
+  // Inspection interval: "time to check it". Overdue inspections show as
+  // Due soon (orange), not red: not checking a part doesn't mean it's bad.
+  const ins = part.inspect;
+  if (ins && (ins.im || ins.mo)) {
+    let ib = base ? { ...base } : null;
+    const ck = ctx.checked?.get(part.id);
+    if (ck && (!ib || !ib.date || (ck.date || '') >= ib.date)) ib = { date: ck.date, miles: ck.miles ?? null };
+    if (ib) {
+      const fr = [];
+      if (ins.im && ib.miles != null && odo != null) fr.push([(odo - ib.miles) / ins.im, `${fmt(odo - ib.miles)} of ${fmt(ins.im)} mi since last check`]);
+      if (ins.mo && ib.date) { const m = monthsBetween(ib.date, today); fr.push([m / ins.mo, `${m.toFixed(1)} of ${ins.mo} months since last check`]); }
+      for (const [f, t] of fr) push(Math.min(0.95, f), f >= 1 ? `Inspection due: ${t}` : t);
+    } else if (!(part.im || part.mo)) {
+      reasons.push({ frac: null, level: 'unknown', text: 'Not checked yet' });
+    }
+  }
+
   // Component age
   if (part.age && comp) {
     const born = comp.mfgDate || comp.installDate;

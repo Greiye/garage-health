@@ -61,6 +61,7 @@ export async function renderPart(app, el, partId) {
     <button class="btn primary" data-act="log">Log service</button>
     <button class="btn" data-act="replace">Replaced it</button>
     ${p.im || p.mo ? '<button class="btn" data-act="quick">Done today</button>' : ''}
+    ${p.inspect ? '<button class="btn" data-act="checked">Checked OK</button>' : ''}
     ${ms ? `<button class="btn" data-act="measure">Add ${esc(ms.label.toLowerCase())}</button>` : ''}
     ${tire || p.key === 'rotation' ? '<button class="btn" data-act="rotate">Rotate tires</button>' : ''}
     <button class="btn warn" data-act="symptom">Report symptom</button>
@@ -93,7 +94,12 @@ export async function renderPart(app, el, partId) {
 
   <section><div class="sec-head"><h3>Intervals & limits</h3><button class="btn small" data-act="settings">Edit</button></div>
     <dl class="kv">
-      ${kv('Service every', [p.im && fmtMi(p.im), p.mo && `${p.mo} months`].filter(Boolean).join(' or ') || 'Condition-based')}
+      ${kv('Service every', [p.im && fmtMi(p.im), p.mo && `${p.mo} months`].filter(Boolean).join(' or ') || (p.inspect ? 'When inspection shows wear' : 'Condition-based'))}
+      ${p.inspect ? kv('Inspect every', [p.inspect.im && fmtMi(p.inspect.im), p.inspect.mo && `${p.inspect.mo} months`].filter(Boolean).join(' or ')) : ''}
+      ${p.pm?.what ? kv('What to check', p.pm.what) : ''}
+      ${st.checked?.get(p.id) ? kv('Last checked', `${fmtDate(st.checked.get(p.id).date)}${st.checked.get(p.id).miles != null ? ` at ${fmtMi(st.checked.get(p.id).miles)}` : ''}`) : ''}
+      ${kv('Schedule', p.customInterval ? 'Your own interval' : p.pm ? `${(st.vehicle.scheduleMode || 'normal') === 'severe' ? 'Severe' : 'Normal'} schedule${p.pm.src ? ` (${p.pm.src})` : ''}` : '')}
+      ${p.pm?.note ? kv('Note', p.pm.note) : ''}
       ${kv('Max age', p.age ? `${(p.age / 12).toFixed(1)} years` : '')}
       ${kv('Last service', last ? `${fmtDate(last.date)}${last.miles != null ? ` at ${fmtMi(last.miles)}` : ''}` : '')}
       ${kv('Next due', nextDue(p, last, comp))}
@@ -118,6 +124,11 @@ export async function renderPart(app, el, partId) {
     if (a === 'quick') {
       await saveService({ vehicleId: st.vehicle.id, date: todayISO(), miles: odo, title: p.name, type: 'Maintenance', partIds: [p.id], cost: null, notes: '' });
       toast(`${p.name} marked done at ${fmtMi(odo)}`);
+      return app.refresh();
+    }
+    if (a === 'checked') {
+      await saveService({ vehicleId: st.vehicle.id, date: todayISO(), miles: odo, title: `${p.name} checked`, type: 'Inspection', partIds: [p.id], cost: null, notes: p.pm?.what ? `Checked: ${p.pm.what}` : '' });
+      toast(`${p.name} checked at ${fmtMi(odo)}`);
       return app.refresh();
     }
     if (a === 'measure') return openMeasure(app, p);
@@ -230,7 +241,10 @@ function openPartSettings(app, p) {
       <label>Service interval (miles)<input type="number" name="im" value="${p.im || ''}" placeholder="none"></label>
       <label>Service interval (months)<input type="number" name="mo" value="${p.mo || ''}" placeholder="none"></label>
       <label>Max age (months from manufacture)<input type="number" name="age" value="${p.age || ''}" placeholder="none"></label>
+      <label>Inspect every (miles)<input type="number" name="iim" value="${p.inspect?.im || ''}" placeholder="none"></label>
+      <label>Inspect every (months)<input type="number" name="imo" value="${p.inspect?.mo || ''}" placeholder="none"></label>
     </div>
+    ${p.pm ? `<label class="chk small"><input type="checkbox" name="usepm" ${p.customInterval ? '' : 'checked'}> Use the recommended ${(app.st.vehicle.scheduleMode || 'normal')} schedule (unticks itself if you change the numbers)</label>` : ''}
     ${p.measure ? `<div class="grid2"><label>${esc(ms.label)} when new (${esc(ms.unit)})<input type="number" step="any" name="nominal" value="${ms.nominal ?? ''}"></label>
     <label>${esc(ms.label)} limit (${esc(ms.unit)})<input type="number" step="any" name="limit" value="${ms.limit ?? ''}"></label></div>` : ''}
     <label>Notes<textarea name="notes" rows="3">${esc(p.notes || '')}</textarea></label>
@@ -244,6 +258,11 @@ function openPartSettings(app, p) {
     },
     onSubmit: async (fd) => {
       const upd = { name: fd.get('name').trim() || p.name, im: num(fd.get('im')) || 0, mo: num(fd.get('mo')) || 0, age: num(fd.get('age')) || 0, notes: fd.get('notes') };
+      const ins = { im: num(fd.get('iim')) || 0, mo: num(fd.get('imo')) || 0 };
+      const changed = upd.im !== (p.im || 0) || upd.mo !== (p.mo || 0) || ins.im !== (p.inspect?.im || 0) || ins.mo !== (p.inspect?.mo || 0);
+      const usePm = p.pm && fd.get('usepm') && !changed;
+      upd.customInterval = !usePm;
+      upd.customInspect = usePm ? null : (ins.im || ins.mo ? ins : null);
       if (p.measure) upd.measure = { ...p.measure, nominal: num(fd.get('nominal')), limit: num(fd.get('limit')) };
       await db.parts.update(p.id, upd);
       await app.refresh();
