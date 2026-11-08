@@ -165,15 +165,31 @@ export async function getConfig() {
 export async function saveConfig({ repo, token, device }) {
   repo = repo.trim().replace(/^https?:\/\/github\.com\//, '').replace(/\.git$/, '').replace(/\/$/, '');
   if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new Error('Repo must look like owner/name');
-  const cfg = { repo, token: token.trim(), device: device.trim() || 'device', branch: 'main' };
-  // Check access and privacy before saving.
-  const r = await fetch(`${API}/repos/${repo}`, { headers: { Authorization: `Bearer ${cfg.token}`, Accept: 'application/vnd.github+json' } });
-  if (r.status === 401) throw new Error('GitHub rejected the token');
-  if (r.status === 404) throw new Error(`Repo ${repo} not found, or the token can't see it`);
+  // Phones sometimes add spaces or line breaks when pasting; tokens never contain them.
+  token = String(token || '').replace(/\s+/g, '');
+  if (!/^(github_pat_|ghp_)[A-Za-z0-9_]{20,}$/.test(token)) {
+    throw new Error(`That doesn't look like a complete GitHub token. Fine-grained tokens start with "github_pat_" and are about 93 characters long (you pasted ${token.length}). Copy it with the copy button next to the token on GitHub; it's only shown once.`);
+  }
+  const cfg = { repo, token, device: device.trim() || 'device', branch: 'main' };
+  const H = { Authorization: `Bearer ${cfg.token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' };
+  // 1. Is the token itself valid?
+  const me = await fetch(`${API}/user`, { headers: H });
+  if (me.status === 401) {
+    const why = (await me.json().catch(() => ({}))).message || 'Bad credentials';
+    throw new Error(`GitHub rejected the token (401: ${why}). It was mistyped or only partly copied, has expired, or was deleted or regenerated. Make a new token and paste it right away.`);
+  }
+  const login = me.ok ? (await me.json()).login : null;
+  // 2. Can it see the repo?
+  const r = await fetch(`${API}/repos/${repo}`, { headers: H });
+  if (r.status === 401) throw new Error('GitHub rejected the token (401).');
+  if (r.status === 404 || r.status === 403) {
+    throw new Error(`The token is valid${login ? ` (signed in as ${login})` : ''} but can't see ${repo}. Check that the repo exists and its name is spelled exactly, then edit the token on GitHub: Repository access → Only select repositories → ${repo.split('/')[1]}, and Permissions → Contents → Read and write.${login && repo.split('/')[0].toLowerCase() !== login.toLowerCase() ? ` The repo owner "${repo.split('/')[0]}" doesn't match your account "${login}".` : ''}`);
+  }
+  if (!r.ok) throw new Error(`GitHub error ${r.status} checking ${repo}: ${(await r.text()).slice(0, 160)}`);
   const info = await r.json();
   if (!info.private) throw new Error(`${repo} is public. Use a private repo so your records and photos stay private.`);
   cfg.branch = info.default_branch || 'main';
-  if (info.permissions && !info.permissions.push) throw new Error('Token can read but not write this repo (needs Contents: read and write)');
+  if (info.permissions && !info.permissions.push) throw new Error('The token can read this repo but not write to it. On GitHub, edit the token: Permissions → Contents → Read and write.');
   await setSetting('sync', cfg);
   await setSetting('syncState', { dirty: true });
   return cfg;

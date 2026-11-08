@@ -63,11 +63,13 @@ export async function openSyncSetup(after) {
       <li>Paste the repo and token below. Do the same on your other device with the same token.</li>
     </ol>
     <label>Data repo<input name="repo" value="${esc(cfg.repo || 'Greiye/garage-health-data')}" required placeholder="owner/name"></label>
-    <label>Token<input name="token" type="password" value="${esc(cfg.token || '')}" required autocomplete="off" placeholder="github_pat_…"></label>
+    <label>Token<input name="token" type="password" value="${esc(cfg.token || '')}" required autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="github_pat_…"></label>
+    <label class="chk small"><input type="checkbox" data-showtok> Show token</label>
     <label>Name for this device<input name="device" value="${esc(cfg.device || (isPhone ? 'Phone' : 'PC'))}"></label>
     <p class="muted small">The token is stored only on this device. It is never included in backups, exports or the synced data.</p>
     <div class="row end"><button class="btn" type="button" data-close>Cancel</button><button class="btn primary" type="submit">Connect & sync</button></div></form>`, {
     wide: true,
+    onMount: (root) => { const c = root.querySelector('[data-showtok]'); if (c) c.onchange = () => { root.querySelector('[name=token]').type = c.checked ? 'text' : 'password'; }; },
     onSubmit: async (fd) => {
       await saveConfig({ repo: fd.get('repo'), token: fd.get('token'), device: fd.get('device') });
       const r = await syncNow(syncOpts());
