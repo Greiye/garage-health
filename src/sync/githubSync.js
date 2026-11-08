@@ -50,7 +50,10 @@ function markDirty() {
 
 // ---------- GitHub API ----------
 async function gh(cfg, path, opts = {}) {
+  // no-store: the same contents URL is fetched as JSON metadata and as raw
+  // bytes; Android WebView's cache can hand back the wrong one.
   const res = await fetch(`${API}/repos/${cfg.repo}/${path}`, {
+    cache: 'no-store',
     ...opts,
     headers: { Authorization: `Bearer ${cfg.token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', ...(opts.headers || {}) },
   });
@@ -76,6 +79,22 @@ async function getRaw(cfg, path, as = 'text') {
   if (!r) return null;
   return as === 'blob' ? r.blob() : r.text();
 }
+const b64ToText = (b64) => new TextDecoder().decode(Uint8Array.from(atob(String(b64).replace(/\s+/g, '')), (c) => c.charCodeAt(0)));
+
+// Read and validate garage/data.json. Falls back to the git blob by sha if the
+// raw request comes back as metadata (wrong media type or a cached response).
+async function readData(cfg, sha) {
+  let obj = JSON.parse(await getRaw(cfg, DATA));
+  if (!obj?.tables && obj?.encoding === 'base64' && obj.content) obj = JSON.parse(b64ToText(obj.content));
+  if (!obj?.tables && (sha || obj?.sha)) {
+    const r = await gh(cfg, `git/blobs/${sha || obj.sha}`);
+    const blob = r && (await r.json());
+    if (blob?.content) obj = JSON.parse(b64ToText(blob.content));
+  }
+  if (!obj?.tables) throw new Error(`${DATA} in ${cfg.repo} isn't a Garage Health sync file. Delete or rename it on GitHub, then sync again to upload this device's data.`);
+  return obj;
+}
+
 async function put(cfg, path, b64, message, sha) {
   const r = await gh(cfg, `contents/${path}`, { method: 'PUT', body: JSON.stringify({ message, content: b64, branch: cfg.branch, ...(sha ? { sha } : {}) }) });
   return (await r.json()).content.sha;
@@ -116,7 +135,7 @@ async function applySnapshot(cfg, data) {
   // failed download leaves local data untouched.
   const local = await db.attachments.toArray();
   const byHash = new Map(local.filter((a) => a.hash && a.blob).map((a) => [a.hash, a.blob]));
-  const rows = data.tables.attachments || [];
+  const rows = data.tables?.attachments || [];
   let i = 0;
   for (const r of rows) {
     i++;
@@ -220,7 +239,7 @@ export async function syncNow(opts = {}) {
       else if (!remoteChanged) action = state.dirty ? 'push' : 'none';
       else if (!state.dirty || !state.lastSha && (await isEmptyLocal())) action = 'pull';
       else {
-        const remote = JSON.parse(await getRaw(cfg, DATA));
+        const remote = await readData(cfg, remoteSha);
         const choice = await resolveConflict?.({ remoteSavedAt: remote.savedAt, remoteDevice: remote.device, localDevice: cfg.device });
         if (!choice) { setStatus('conflict', 'Sync paused: choose which copy to keep'); return { action: 'conflict' }; }
         if (choice === 'local') {
@@ -240,7 +259,7 @@ export async function syncNow(opts = {}) {
         await setSetting('syncState', { lastSha: sha, dirty: false, lastSync: new Date().toISOString(), lastAction: 'pushed' });
       } else if (action === 'pull') {
         setStatus('syncing', 'Downloading records');
-        const remote = JSON.parse(await getRaw(cfg, DATA));
+        const remote = await readData(cfg, remoteSha);
         await applySnapshot(cfg, remote);
         await setSetting('syncState', { lastSha: remoteSha, dirty: false, lastSync: new Date().toISOString(), lastAction: `pulled from ${remote.device || 'other device'}` });
         await onPulled?.();
