@@ -94,7 +94,8 @@ export async function renderPart(app, el, partId) {
 
   <section><div class="sec-head"><h3>Intervals & limits</h3><button class="btn small" data-act="settings">Edit</button></div>
     <dl class="kv">
-      ${kv('Service every', [p.im && fmtMi(p.im), p.mo && `${p.mo} months`].filter(Boolean).join(' or ') || (p.inspect ? 'When inspection shows wear' : 'Condition-based'))}
+      ${kv('Replace every', [p.im && fmtMi(p.im), p.mo && `${p.mo} months`].filter(Boolean).join(' or ') || (p.inspect || p.life ? 'No fixed interval: replace when worn or leaking' : 'Condition-based'))}
+      ${p.life && !(p.im || p.mo) ? kv('Typical life', `about ${[p.life.im && fmtMi(p.life.im), p.life.mo && `${Math.round(p.life.mo / 12)} years`].filter(Boolean).join(' or ')} (turns yellow, not red)`) : ''}
       ${p.inspect ? kv('Inspect every', [p.inspect.im && fmtMi(p.inspect.im), p.inspect.mo && `${p.inspect.mo} months`].filter(Boolean).join(' or ')) : ''}
       ${p.pm?.what ? kv('What to check', p.pm.what) : ''}
       ${st.checked?.get(p.id) ? kv('Last checked', `${fmtDate(st.checked.get(p.id).date)}${st.checked.get(p.id).miles != null ? ` at ${fmtMi(st.checked.get(p.id).miles)}` : ''}`) : ''}

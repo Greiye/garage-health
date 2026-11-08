@@ -37,9 +37,10 @@ export function buildTasks(st, mpm) {
       if (ck && (!ib || !ib.date || (ck.date || '') >= ib.date)) ib = { ...ck };
       defs.push({ kind: 'inspect', iv: p.inspect, base: ib });
     }
+    if (p.life && (p.life.im || p.life.mo) && !(p.im || p.mo)) defs.push({ kind: 'life', iv: p.life, base });
     for (const d of defs) {
       const t = { part: p, kind: d.kind, iv: d.iv, base: d.base, what: d.kind === 'inspect' ? p.pm?.what : null, note: p.pm?.note, src: p.pm?.src };
-      if (!d.base || (d.base.miles == null && !d.base.date)) { t.status = 'never'; tasks.push(t); continue; }
+      if (!d.base || (d.base.miles == null && !d.base.date)) { if (d.kind !== 'life') { t.status = 'never'; tasks.push(t); } continue; }
       const cands = [];
       if (d.iv.im && d.base.miles != null) {
         t.dueMiles = d.base.miles + d.iv.im;
@@ -53,34 +54,36 @@ export function buildTasks(st, mpm) {
       t.when = cands.length ? new Date(Math.min(...cands.map((x) => x.getTime()))) : null;
       const daysLeft = t.when ? (t.when - today) / DAY : Infinity;
       const overdue = (t.milesLeft != null && t.milesLeft <= 0) || (t.dueDate && t.dueDate <= today);
+      if (d.kind === 'life') { t.status = overdue ? 'pastlife' : 'lifelater'; tasks.push(t); continue; }
       t.status = overdue ? 'overdue' : daysLeft <= 30 || (t.milesLeft != null && t.milesLeft <= 500) ? 'soon' : daysLeft <= 183 ? 'next6' : 'later';
       tasks.push(t);
     }
   }
-  const order = { overdue: 0, soon: 1, next6: 2, later: 3, never: 4 };
+  const order = { overdue: 0, soon: 1, pastlife: 2, next6: 3, later: 4, lifelater: 5, never: 6 };
   tasks.sort((a, b) => order[a.status] - order[b.status] || (a.when?.getTime() ?? Infinity) - (b.when?.getTime() ?? Infinity) || a.part.name.localeCompare(b.part.name));
   return tasks;
 }
 
 const GROUPS = [
-  ['overdue', 'Overdue'], ['soon', 'Due in the next month'], ['next6', 'Next 6 months'], ['later', 'Later'], ['never', 'No history yet'],
+  ['overdue', 'Overdue'], ['soon', 'Due in the next month'], ['pastlife', 'Past typical life (inspect, plan replacement)'], ['next6', 'Next 6 months'], ['later', 'Later'], ['lifelater', 'Typical life (no factory interval)'], ['never', 'No history yet'],
 ];
 const every = (iv) => [iv.im && `${iv.im.toLocaleString()} mi`, iv.mo && (iv.mo % 12 === 0 && iv.mo >= 12 ? `${iv.mo / 12} yr` : `${iv.mo} mo`)].filter(Boolean).join(' / ');
 
 function taskRow(t) {
   const p = t.part;
   const dueBits = [t.dueMiles != null && fmtMi(t.dueMiles), t.dueDate && fmtDate(t.dueDate.toISOString().slice(0, 10))].filter(Boolean).join(' or ');
-  const left = t.status === 'never' ? 'Log when it was last done to start tracking'
+  const lifeTxt = (t.kind === 'life') ? (t.status === 'pastlife' ? `Past typical life${t.milesLeft != null && t.milesLeft < 0 ? ` by ${Math.abs(t.milesLeft).toLocaleString()} mi` : ''}. Not required, but check it and budget for it.` : `Typical life ~${t.when ? fmtDate(t.when.toISOString().slice(0, 10)) : ''}. Replace only if worn or leaking.`) : null;
+  const left = lifeTxt ? lifeTxt : t.status === 'never' ? 'Log when it was last done to start tracking'
     : t.status === 'overdue' ? `Overdue${t.milesLeft != null && t.milesLeft < 0 ? ` by ${Math.abs(t.milesLeft).toLocaleString()} mi` : ''}${t.dueDate && t.dueDate < new Date() ? ` · since ${fmtDate(t.dueDate.toISOString().slice(0, 10))}` : ''}`
     : `${t.milesLeft != null ? `${t.milesLeft.toLocaleString()} mi left` : ''}${t.milesLeft != null && t.when ? ' · ' : ''}${t.when ? `~${fmtDate(t.when.toISOString().slice(0, 10))}` : ''}`;
-  const dotCls = t.status === 'overdue' ? (t.kind === 'service' ? 'lv-red blink' : 'lv-orange') : t.status === 'soon' ? 'lv-orange' : t.status === 'never' ? 'lv-unknown' : 'lv-green';
+  const dotCls = t.kind === 'life' ? (t.status === 'pastlife' ? 'lv-yellow' : 'lv-green') : t.status === 'overdue' ? (t.kind === 'service' ? 'lv-red blink' : 'lv-orange') : t.status === 'soon' ? 'lv-orange' : t.status === 'never' ? 'lv-unknown' : 'lv-green';
   return `<li class="row-item sched" data-part="${p.id}">
     <span class="dot ${dotCls}"></span>
-    <div class="grow"><div>${esc(p.name)} <span class="tag tag-${t.kind}">${t.kind === 'service' ? 'Service' : 'Inspect'}</span></div>
-      <div class="muted small">Every ${esc(every(t.iv))}${dueBits ? ` · due ${esc(dueBits)}` : ''}</div>
+    <div class="grow"><div>${esc(p.name)} <span class="tag tag-${t.kind}">${t.kind === 'service' ? 'Replace' : t.kind === 'life' ? 'Typical life' : p.pm?.key?.includes('gasket') || /gasket|seal/i.test(p.name) ? 'Leak check' : 'Inspect'}</span>${t.src && t.kind !== 'life' ? ` <span class="muted small">${esc(t.src)}</span>` : ''}</div>
+      <div class="muted small">${t.kind === 'life' ? `Usually lasts ${esc(every(t.iv))}` : `Every ${esc(every(t.iv))}`}${dueBits && t.kind !== 'life' ? ` · due ${esc(dueBits)}` : ''}</div>
       <div class="small ${t.status === 'overdue' ? 'txt-orange' : 'muted'}">${esc(left)}</div>
       ${t.what ? `<div class="small muted">Check: ${esc(t.what)}</div>` : ''}</div>
-    <button class="btn small" data-done="${p.id}" data-kind="${t.kind}">${t.kind === 'service' ? 'Done' : 'Checked OK'}</button>
+    ${t.kind === 'life' ? `<button class="btn small" data-done="${p.id}" data-kind="service">Replaced</button>` : `<button class="btn small" data-done="${p.id}" data-kind="${t.kind}">${t.kind === 'service' ? 'Done' : 'Checked OK'}</button>`}
   </li>`;
 }
 
@@ -99,11 +102,11 @@ export async function renderSchedule(app, el, header = '') {
         <div class="seg">${Object.entries(MODES).map(([k, m]) => `<button class="seg-b ${k === mode ? 'on' : ''}" data-mode="${k}">${m.label}</button>`).join('')}</div></div>
       <p class="muted small">${esc(MODES[mode].hint)} ${mode === 'normal' ? `Switch to Severe if that describes your driving (oil every 3,000 mi / 3 months).` : ''}</p>
       <p class="muted small">Whichever comes first, miles or time. Dates are projected from ${mpm ? `your average of ${Math.round(mpm).toLocaleString()} mi/month` : 'an assumed 1,000 mi/month (update the odometer now and then to use your real average)'}.
-      Service items go red and blink when overdue; inspections go orange. Ford's 2001 schedule is used for oil, filters, plugs and tire rotation, and general manual guidance for the rest. Change any part's interval under its Intervals &amp; limits.</p>
+      Replace items go red and blink when overdue; inspections and leak checks go orange; parts past their typical life (no factory interval, like gaskets) go yellow. Ford's SN95 Mustang schedule is used where Ford gives an interval, and general guidance for the rest (approximate). Change any part's interval under its Intervals &amp; limits.</p>
     </section>
     ${GROUPS.map(([k, label]) => {
       if (!counts[k]) return '';
-      if ((k === 'later' || k === 'never') && !showLater) return `<section><button class="btn small" data-more="${k}">Show ${label.toLowerCase()} (${counts[k]})</button></section>`;
+      if ((k === 'later' || k === 'never' || k === 'lifelater') && !showLater) return `<section><button class="btn small" data-more="${k}">Show ${label.toLowerCase()} (${counts[k]})</button></section>`;
       return `<section><h3>${label} <span class="muted small">${counts[k]}</span></h3><ul class="list">${tasks.filter((t) => t.status === k).map(taskRow).join('')}</ul></section>`;
     }).join('')}`;
 

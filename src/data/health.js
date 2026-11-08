@@ -96,6 +96,16 @@ export function partHealth(part, ctx) {
     }
   }
 
+  // Typical life: no factory replacement interval, but parts like this
+  // usually wear out around here. Past it → Watch (yellow), never red.
+  const life = part.life;
+  if (life && (life.im || life.mo) && base && !(part.im || part.mo)) {
+    const over = [];
+    if (life.im && base.miles != null && odo != null && odo - base.miles >= life.im) over.push(`${fmt(odo - base.miles)} mi`);
+    if (life.mo && base.date) { const m = monthsBetween(base.date, today); if (m >= life.mo) over.push(`${(m / 12).toFixed(1)} years`); }
+    if (over.length) push(0.6, `Past typical life (${[life.im && fmt(life.im) + ' mi', life.mo && (life.mo / 12).toFixed(0) + ' yr'].filter(Boolean).join(' / ')}): ${over.join(', ')} since replaced. Inspect and plan replacement.`);
+  }
+
   // Component age
   if (part.age && comp) {
     const born = comp.mfgDate || comp.installDate;

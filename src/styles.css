@@ -274,4 +274,5 @@ body.stage-hidden .show-model { display: block; position: fixed; right: max(12px
 .sched .tag { cursor: default; margin-left: .3rem; }
 .tag-service { border-color: var(--accent); color: var(--accent); }
 .tag-inspect { color: var(--muted); }
+.tag-life { color: var(--yellow); }
 .sched .btn { align-self: center; white-space: nowrap; }
