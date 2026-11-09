@@ -5,6 +5,7 @@ import { createVehicle, applyOptions, setOdometer } from '../data/repo.js';
 import { PRESETS, OPTION_FIELDS, SYSTEMS } from '../data/templates.js';
 import { exportServicesCsv, exportPartsCsv, exportTiresCsv, exportCostsCsv } from './csvExport.js';
 import { esc, fmtMi, fmtDate, modal, toast, confirmDialog, download, num } from './util.js';
+import { getKeepScreenOn, setKeepScreenOn } from './display.js';
 
 export async function renderGarage(app, el) {
   const vehicles = await db.vehicles.toArray();
@@ -13,6 +14,7 @@ export async function renderGarage(app, el) {
   const hidden = app.st.allParts.filter((p) => p.hidden);
   const syncCard = await syncCardHTML();
   const cm = await getCustomModel(v.id).catch(() => null);
+  const keepOn = await getKeepScreenOn();
   el.innerHTML = `
   <section class="card"><div class="sec-head"><h3>Vehicles</h3><button class="btn small primary" data-act="add">Add vehicle</button></div>
     <ul class="list">${vehicles.map((x) => `<li class="row-item ${x.id === v.id ? 'current' : ''}" data-vehicle="${x.id}"><span class="swatch" style="background:${esc(x.bodyColor)}"></span><div class="grow"><div>${esc(x.name)}</div><div class="muted small">${esc([x.engine, x.transmission].filter(Boolean).join(' · '))} · ${fmtMi(x.odometer)}</div></div>${x.id === v.id ? '<span class="muted small">current</span>' : '<span>›</span>'}</li>`).join('')}</ul>
@@ -27,6 +29,10 @@ export async function renderGarage(app, el) {
     <p class="small">${cm ? `Using <b>${esc(cm.name)}</b> (${(cm.size / 1048576).toFixed(1)} MB). Wheels show tire health, calipers show brake health; tap X-ray to see every other part inside.` : placeholderFor(v) ? 'Using the placeholder Mustang model until you import your own.' : 'Using the built-in model.'}</p>
     <p class="muted small">Load your own .glb model for this vehicle. It's saved on this device only: not synced, not in backups, so import it on each device. Front, size and wheels are fitted automatically.</p>
     <div class="actions"><label class="btn file-btn">${cm ? 'Replace model' : 'Use my own 3D model'}<input type="file" accept=".glb,model/gltf-binary,application/octet-stream" data-model hidden></label>${cm ? `<button class="btn" data-act="model-reset">${placeholderFor(v) ? 'Use placeholder model' : 'Use built-in model'}</button>` : ''}</div>
+  </section>
+
+  <section class="card"><h3>Display</h3>
+    <label class="row-item"><span class="grow">Keep screen on<div class="muted small">Stops the screen from sleeping while the app is open. Only applies while this app is on screen; this device only.</div></span><input type="checkbox" data-keep-on ${keepOn ? 'checked' : ''}></label>
   </section>
 
   <section class="card"><div class="sec-head"><h3>Odometer</h3><button class="btn small" data-act="odo">Update</button></div>
@@ -52,6 +58,7 @@ export async function renderGarage(app, el) {
   el.onclick = async (e) => {
     const t = e.target.closest('[data-act],[data-vehicle],[data-unhide],[data-csv-x],[data-sync]');
     if (t?.dataset.sync) return onSyncClick(app, t.dataset.sync, () => renderGarage(app, el));
+    if (e.target.matches('[data-keep-on]')) return setKeepScreenOn(e.target.checked);
     if (!t) return;
     if (t.dataset.vehicle) { await setSetting('currentVehicle', +t.dataset.vehicle); return app.loadVehicle(+t.dataset.vehicle); }
     if (t.dataset.unhide) { await db.parts.update(+t.dataset.unhide, { hidden: false, userHidden: false }); return app.refresh(); }

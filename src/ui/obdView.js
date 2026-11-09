@@ -1,6 +1,7 @@
 import { db, getSetting, setSetting } from '../data/db.js';
 import { addFlag } from '../data/repo.js';
-import { BluetoothTransport, normalizeMac, setKeepAwake, WebSerialTransport, WebBleTransport, DemoTransport, Elm327, Poller } from '../obd/elm327.js';
+import { BluetoothTransport, normalizeMac, setKeepAwake, WebSerialTransport, WebBleTransport, DemoTransport, Elm327, Poller, RecordingService } from '../obd/elm327.js';
+import { applyKeepScreenOn } from './display.js';
 import { CHANNELS, PIDS, evaluate } from '../obd/pids.js';
 import { describeDtc, partsForDtc, dtcSeverity } from '../obd/dtc.js';
 import { parseObdCsv, summarize, downsample } from '../obd/csvImport.js';
@@ -32,6 +33,8 @@ const pidsFor = (cfg) => [...ALWAYS_PIDS, ...cfg.gauges.filter((ch) => ch !== 'v
 const live = { buf: [], diag: null, dtcCodes: [], autoTried: new Set(), elm: null, transport: null, poller: null, sample: {}, recording: null, status: 'disconnected', info: null, log: [], alerts: new Map(), screen: new Screen(), sustainState: new Map() };
 
 export async function renderObd(app, el) {
+  lastApp = app; lastEl = el;
+  if (!stopHooked) { stopHooked = true; RecordingService.onStop(() => { if (lastApp && live.recording) finishRecording(lastApp, lastEl); }); }
   const native = BluetoothTransport.available();
   const serial = !native && WebSerialTransport.available();
   const saved = native ? await savedAdapter(app.st.vehicle.id) : null;
@@ -210,16 +213,10 @@ async function onClick(app, el, e) {
     if (act === 'rediag') { lastDiag = 0; return updateDiag(app); }
     if (act === 'gauges') return chooseGauges(app, el);
     if (act === 'record') {
-      if (live.recording) {
-        const r = live.recording;
-        live.recording = null;
-        await saveSession(app, { name: `Live session ${new Date().toLocaleString()}`, source: live.transport instanceof DemoTransport ? 'demo' : 'live', rows: r.rows });
-        toast('Session saved');
-        renderObd(app, el);
-      } else {
-        live.recording = { t0: Date.now(), rows: [] };
-        renderObd(app, el);
-      }
+      if (live.recording) return finishRecording(app, el);
+      live.recording = { t0: Date.now(), rows: [] };
+      startRecordingNotice();
+      renderObd(app, el);
     }
     if (act === 'readdtc') {
       const { stored, pending } = await live.elm.readDtcs();
@@ -299,10 +296,40 @@ async function disconnect(app, el) {
   live.status = 'disconnected';
   live.elm = live.poller = live.transport = live.info = null;
   if (live.recording?.rows.length) {
+    stopRecordingNotice();
     await saveSession(app, { name: `Live session ${new Date().toLocaleString()}`, source: 'live', rows: live.recording.rows });
   }
+  stopRecordingNotice();
   live.recording = null;
   renderObd(app, el);
+}
+
+// Ends the recording, from the Stop button or the notification.
+let lastApp = null, lastEl = null, stopHooked = false, recTimer = null;
+async function finishRecording(app, el) {
+  const r = live.recording;
+  if (!r) return;
+  live.recording = null;
+  stopRecordingNotice();
+  await saveSession(app, { name: `Live session ${new Date().toLocaleString()}`, source: live.transport instanceof DemoTransport ? 'demo' : 'live', rows: r.rows });
+  toast('Session saved');
+  renderObd(app, el);
+}
+// Keeps the recording alive in the background and updates its notification every 5 s.
+function startRecordingNotice() {
+  RecordingService.start('0:00 · 0 rows');
+  clearInterval(recTimer);
+  recTimer = setInterval(() => {
+    const r = live.recording;
+    if (!r) return;
+    const s = Math.round((Date.now() - r.t0) / 1000);
+    RecordingService.start(`${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} · ${r.rows.length} rows`);
+  }, 5000);
+}
+function stopRecordingNotice() {
+  clearInterval(recTimer);
+  recTimer = null;
+  RecordingService.stop();
 }
 
 let lastFlagWrite = 0;
@@ -497,7 +524,7 @@ async function openFullscreen(app) {
   const exit = async () => {
     fs.remove();
     document.removeEventListener('keydown', onKey);
-    await setKeepAwake(false);
+    await applyKeepScreenOn();
     try { screen.orientation?.unlock?.(); } catch {}
     if (document.fullscreenElement) { try { await document.exitFullscreen(); } catch {} }
   };

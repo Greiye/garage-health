@@ -1,4 +1,5 @@
 import { openHoldMenu } from './ui/holdMenu.js';
+import { applyKeepScreenOn } from './ui/display.js';
 import './styles.css';
 import { db } from './data/db.js';
 import { currentVehicleId, loadVehicleState } from './data/repo.js';
@@ -141,6 +142,7 @@ function shell() {
 async function boot() {
   shell();
   try { await navigator.storage?.persist?.(); } catch {}
+  try { await applyKeepScreenOn(); } catch {}
   const tip = $('#tip');
   app.viewer = new Viewer($('#stage'), {
     onHold: (slot, x, y) => openHoldMenu(app, slot, x, y),

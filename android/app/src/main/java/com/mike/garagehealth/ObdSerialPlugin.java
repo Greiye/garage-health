@@ -7,6 +7,10 @@ import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothManager;
 import android.bluetooth.BluetoothSocket;
 import android.content.Context;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 import android.os.Build;
 import android.view.WindowManager;
 
@@ -183,6 +187,29 @@ public class ObdSerialPlugin extends Plugin {
         } catch (IOException e) {
             call.reject("Write failed: " + e.getMessage());
         }
+    }
+
+    /** The plugin instance the background recording service talks back to. */
+    static ObdSerialPlugin current;
+
+    void notifyStop() { notifyListeners("recordStop", new JSObject()); }
+
+    /** Start (or refresh) the recording notification. Keeps recording with other apps in front. */
+    @PluginMethod
+    public void startRecording(PluginCall call) {
+        current = this;
+        if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(getContext(), Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED && getActivity() != null) {
+            ActivityCompat.requestPermissions(getActivity(), new String[]{Manifest.permission.POST_NOTIFICATIONS}, 7);
+        }
+        Intent i = new Intent(getContext(), ObdRecordService.class).putExtra(ObdRecordService.EXTRA_TEXT, call.getString("text", "Recording OBD session"));
+        ContextCompat.startForegroundService(getContext(), i);
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void stopRecording(PluginCall call) {
+        getContext().stopService(new Intent(getContext(), ObdRecordService.class));
+        call.resolve();
     }
 
     /** Keep the screen on while the live dashboard is open. */

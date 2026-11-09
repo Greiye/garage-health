@@ -360,3 +360,11 @@ export class Poller {
   }
   stop() { this.running = false; this.wake?.(); }
 }
+
+// Background recording: a foreground service keeps the recording alive with another app in front.
+// Native Android only; on web these do nothing.
+export const RecordingService = {
+  start(text) { if (Capacitor.isNativePlatform()) ObdSerial.startRecording({ text }).catch(() => {}); },
+  stop() { if (Capacitor.isNativePlatform()) ObdSerial.stopRecording().catch(() => {}); },
+  onStop(fn) { if (Capacitor.isNativePlatform()) ObdSerial.addListener('recordStop', fn); },
+};
