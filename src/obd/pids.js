@@ -28,7 +28,26 @@ export const PIDS = {
   '42': { ch: 'voltage', name: 'Module voltage', unit: 'V', bytes: 2, f: ([a, b]) => (a * 256 + b) / 1000 },
   '46': { ch: 'ambient', name: 'Ambient temp', unit: '°F', bytes: 1, f: ([a]) => C2F(a - 40) },
   '5C': { ch: 'oiltemp', name: 'Oil temp', unit: '°F', bytes: 1, f: ([a]) => C2F(a - 40) },
+  // More standard Mode 01 PIDs. Which ones a car answers shows after connect (PID 00/20/40 bitmaps).
+  '0A': { ch: 'fuelpress', name: 'Fuel pressure (gauge)', unit: 'psi', bytes: 1, f: ([a]) => a * 3 * 0.145038 },
+  '21': { ch: 'milDist', name: 'Distance with MIL on', unit: 'mi', bytes: 2, f: ([a, b]) => (a * 256 + b) * 0.621371 },
+  '2C': { ch: 'egrCmd', name: 'Commanded EGR', unit: '%', bytes: 1, f: ([a]) => (a * 100) / 255 },
+  '2E': { ch: 'evapCmd', name: 'Commanded EVAP purge', unit: '%', bytes: 1, f: ([a]) => (a * 100) / 255 },
+  '30': { ch: 'warmups', name: 'Warm-ups since codes cleared', unit: '', bytes: 1, f: ([a]) => a },
+  '31': { ch: 'clrDist', name: 'Distance since codes cleared', unit: 'mi', bytes: 2, f: ([a, b]) => (a * 256 + b) * 0.621371 },
+  '43': { ch: 'absload', name: 'Absolute load', unit: '%', bytes: 2, f: ([a, b]) => ((a * 256 + b) * 100) / 255 },
+  '44': { ch: 'lambdaCmd', name: 'Commanded air-fuel ratio (λ)', unit: 'λ', bytes: 2, f: ([a, b]) => (2 / 65536) * (a * 256 + b) },
+  '45': { ch: 'relthrottle', name: 'Relative throttle', unit: '%', bytes: 1, f: ([a]) => (a * 100) / 255 },
+  '47': { ch: 'throttleB', name: 'Throttle position B', unit: '%', bytes: 1, f: ([a]) => (a * 100) / 255 },
+  '49': { ch: 'pedalD', name: 'Accelerator pedal D', unit: '%', bytes: 1, f: ([a]) => (a * 100) / 255 },
+  '4C': { ch: 'throttleCmd', name: 'Commanded throttle', unit: '%', bytes: 1, f: ([a]) => (a * 100) / 255 },
 };
+
+// Channels that change slowly. The poller reads these once every SLOW_EVERY
+// cycles, so a basic ELM327 (about 5 to 10 requests per second) spends its time
+// on the channels that move fast. See src/obd/budget.js.
+export const SLOW = new Set(['coolant', 'iat', 'ltft1', 'ltft2', 'voltage', 'fuel', 'baro', 'ambient', 'oiltemp', 'transtemp', 'runtime',
+  'milDist', 'warmups', 'clrDist', 'fuelpress']);
 
 // Channels in display order, with health rules. Rules map a reading to a
 // part key and a severity. "when" lets a rule apply only while running.
@@ -70,6 +89,18 @@ export const CHANNELS = {
   oiltemp: { name: 'Oil temp', unit: '°F', dp: 0, rules: [{ gt: 270, sev: 'warn', parts: ['oil'], text: 'Oil temp over 270°F' }] },
   transtemp: { name: 'Trans temp', unit: '°F', dp: 0, rules: [{ gt: 240, sev: 'warn', parts: ['trans_fluid'], text: 'Transmission temp over 240°F' }] },
   runtime: { name: 'Run time', unit: 's', dp: 0 },
+  fuelpress: { name: 'Fuel pressure', unit: 'psi', dp: 0 },
+  absload: { name: 'Absolute load', unit: '%', dp: 0 },
+  lambdaCmd: { name: 'Commanded λ', unit: 'λ', dp: 3 },
+  relthrottle: { name: 'Relative throttle', unit: '%', dp: 0 },
+  throttleB: { name: 'Throttle B', unit: '%', dp: 0 },
+  pedalD: { name: 'Pedal D', unit: '%', dp: 0 },
+  throttleCmd: { name: 'Commanded throttle', unit: '%', dp: 0 },
+  egrCmd: { name: 'Commanded EGR', unit: '%', dp: 0 },
+  evapCmd: { name: 'EVAP purge', unit: '%', dp: 0 },
+  milDist: { name: 'Miles with MIL on', unit: 'mi', dp: 0 },
+  clrDist: { name: 'Miles since codes cleared', unit: 'mi', dp: 0 },
+  warmups: { name: 'Warm-ups since clear', unit: '', dp: 0 },
 };
 
 // Evaluate rules for one sample. Returns [{ partKeys, sev, text, code }]

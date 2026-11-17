@@ -7,6 +7,8 @@ import { openServiceForm, componentFieldsHTML, readComponentFields } from './ser
 import { openRotation } from './rotation.js';
 import { vehicleCatalog } from '../data/repo.js';
 import { pnHTML } from './catalogView.js';
+import { trendsForPart, TESTS, METRICS, metricRange } from '../obd/trends.js';
+import { trendSvg } from './trendChart.js';
 
 export const chip = (level, extra = '', label) => `<span class="chip lv-${level}">${esc(label || LEVELS[level].label)}${extra}</span>`;
 export const dot = (level, blink) => `<span class="dot lv-${level} ${blink ? 'blink' : ''}"></span>`;
@@ -44,6 +46,7 @@ export async function renderPart(app, el, partId) {
   const tire = p.kind === 'tire';
   const ms = p.measure;
   const meas = (comp?.measurements || []).slice().sort((a, b) => (a.date < b.date ? 1 : -1));
+  const obdTrends = trendsForPart(await db.obdSessions.where({ vehicleId: st.vehicle.id }).toArray(), p.key).slice(0, 2);
 
   const usedMiles = comp?.installMiles != null && odo != null ? odo - comp.installMiles : null;
   const ageYears = comp?.mfgDate ? monthsBetween(comp.mfgDate, todayISO()) / 12 : null;
@@ -91,6 +94,10 @@ export async function renderPart(app, el, partId) {
 
   ${ms ? `<section><div class="sec-head"><h3>${esc(ms.label)}</h3><span class="muted small">${ms.nominal != null ? `new ${ms.nominal} · limit ${ms.limit} ${esc(ms.unit)}` : 'Set limits in Intervals & limits'}</span></div>
     ${meas.length ? `${sparkline(meas.slice().reverse(), ms)}<table class="tbl"><tr><th>Date</th><th>Miles</th><th>${esc(ms.unit)}</th><th>Note</th></tr>${meas.map((m) => `<tr><td>${fmtDate(m.date)}</td><td>${fmtMi(m.miles)}</td><td><b>${m.value}</b></td><td>${esc(m.note || '')}</td></tr>`).join('')}</table>` : '<p class="muted small">No measurements yet.</p>'}
+  </section>` : ''}
+
+  ${obdTrends.length ? `<section><div class="sec-head"><h3>OBD trends</h3><span class="muted small">one point per session</span></div>
+    ${obdTrends.map((t) => `<h4 class="small">${esc(METRICS[t.metric].label)} <span class="muted">· ${esc(TESTS[t.test].name)} · ${t.points.length} session${t.points.length > 1 ? 's' : ''}</span></h4>${trendSvg(t.points, METRICS[t.metric], metricRange(t.metric, st.vehicle))}`).join('')}
   </section>` : ''}
 
   <section><div class="sec-head"><h3>Intervals & limits</h3><button class="btn small" data-act="settings">Edit</button></div>

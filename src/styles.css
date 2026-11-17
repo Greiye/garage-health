@@ -287,3 +287,20 @@ body.stage-hidden .show-model { display: block; position: fixed; right: max(12px
 .hold-name { font-size: .92rem; margin-bottom: 5px; }
 .hold-btns { display: flex; gap: 6px; flex-wrap: wrap; }
 .hold-btns .btn { white-space: nowrap; }
+
+/* Telemetry: polling budget and trend charts */
+.budget { margin: .4rem 0 .6rem; display: grid; gap: .2rem; }
+.budget-bar { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
+.budget-bar i { display: block; height: 100%; }
+.budget-bar .b-ok { background: var(--green); } .budget-bar .b-warn { background: var(--orange); } .budget-bar .b-over { background: var(--red); }
+.txt-red { color: var(--red); }
+.budget-line { margin: .3rem 0 0; }
+.mode22 { margin-top: .5rem; align-items: center; gap: .5rem; }
+svg.trend { width: 100%; height: auto; display: block; margin: .4rem 0; }
+.trend .tr-band { fill: color-mix(in srgb, var(--green) 14%, transparent); }
+.trend .tr-grid { stroke: var(--line); stroke-width: 1; }
+.trend .tr-ax { fill: var(--muted); font-size: 12px; }
+.trend .tr-line { fill: none; stroke: var(--accent); stroke-width: 2.5; }
+.trend .tr-pt { fill: var(--accent); stroke: var(--card); stroke-width: 2; }
+.trend .tr-pt.tr-out { fill: var(--orange); }
+.trend-list { margin-top: .3rem; }

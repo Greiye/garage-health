@@ -11,6 +11,11 @@ import { Screen, sustain, LIMITS } from '../obd/filter.js';
 import { scaleFor, zoneGradient, needlePct, zoneAt } from '../obd/scales.js';
 import { diagnosisHTML, onDiagClick } from './diagView.js';
 import { esc, fmtDate, toast, modal, confirmDialog } from './util.js';
+import { estimate, fmtPeriod, DEFAULT_RPS, MAX_FAST_PERIOD, O2_MIN_HZ, isSlow } from '../obd/budget.js';
+import { TESTS, TEST_METRICS, METRICS, METRICS_V, summarizeSession, trendPoints, availableMetrics, metricRange } from '../obd/trends.js';
+import { trendSvg } from './trendChart.js';
+import { exportTrendsCsv } from './csvExport.js';
+import { probeMode22, mode22Summary } from '../obd/mode22.js';
 
 const GAUGES = ['rpm', 'speed', 'coolant', 'voltage', 'ltft1', 'ltft2', 'stft1', 'stft2', 'iat', 'maf', 'throttle', 'load', 'timing', 'o2_b1s1', 'o2_b2s1', 'o2_b1s2', 'o2_b2s2'];
 
@@ -28,6 +33,21 @@ async function saveDashConfig(vehicleId, cfg) {
   if (live.poller) { live.poller.setPids(pidsFor(cfg)); live.poller.setRate(cfg.rateMs); }
 }
 const pidsFor = (cfg) => [...ALWAYS_PIDS, ...cfg.gauges.filter((ch) => ch !== 'voltage').map((ch) => CH_PID[ch]).filter(Boolean)];
+// Channels actually polled for a gauge pick: the always-read ones and adapter voltage included.
+const polledChannels = (gauges) => [...new Set([...ALWAYS_PIDS.map((p) => PIDS[p].ch), 'voltage', ...gauges])];
+
+// Measured adapter speed (requests per second) per vehicle, on this device only.
+async function adapterRps(vehicleId) { return (await getSetting('obdSpeed', {}))[vehicleId] || null; }
+async function saveAdapterRps(vehicleId, rps) {
+  if (!(rps > 0.5 && rps < 60)) return;
+  const all = { ...(await getSetting('obdSpeed', {})) };
+  all[vehicleId] = Math.round(rps * 10) / 10;
+  await setSetting('obdSpeed', all);
+}
+function budgetLine(gauges, rps) {
+  const e = estimate(polledChannels(gauges), rps || DEFAULT_RPS);
+  return `${rps ? `Adapter ≈ ${e.rps.toFixed(1)} requests/s` : `Basic ELM327 ≈ ${DEFAULT_RPS} requests/s (not measured yet)`} · fast gauges ${fmtPeriod(e.fastPeriod)} · slow ${fmtPeriod(e.slowPeriod)}${e.ok ? '' : ' · <span class="txt-orange">too many gauges</span>'}`;
+}
 
 // Connection state survives tab switches.
 const live = { buf: [], diag: null, dtcCodes: [], autoTried: new Set(), elm: null, transport: null, poller: null, sample: {}, recording: null, status: 'disconnected', info: null, log: [], alerts: new Map(), screen: new Screen(), sustainState: new Map() };
@@ -41,6 +61,9 @@ export async function renderObd(app, el) {
   live.cfg = await dashConfig(app.st.vehicle.id);
   live.R = rangesFor(app.st.vehicle);
   const sessions = await db.obdSessions.where({ vehicleId: app.st.vehicle.id }).reverse().sortBy('date');
+  await backfillSummaries(app, sessions);
+  live.rps = await adapterRps(app.st.vehicle.id);
+  const m22 = app.st.vehicle.mode22;
   const dtcs = await db.dtcs.where({ vehicleId: app.st.vehicle.id }).toArray();
   const activeDtcs = dtcs.filter((d) => d.active);
   live.dtcCodes = activeDtcs.map((d) => d.code);
@@ -54,7 +77,8 @@ export async function renderObd(app, el) {
     <div class="actions">
       ${live.status === 'connected' ? `
         <button class="btn" data-act="disconnect">Disconnect</button>
-        <button class="btn ${live.recording ? 'danger' : 'primary'}" data-act="record">${live.recording ? `Stop recording (${live.recording.rows.length})` : 'Record session'}</button>
+        ${live.recording ? '' : `<select data-test title="Which test is this? Sessions of the same test are compared over time.">${Object.entries(TESTS).map(([k, t]) => `<option value="${k}" ${k === live.test ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select>`}
+        <button class="btn ${live.recording ? 'danger' : 'primary'}" data-act="record">${live.recording ? `Stop recording ${esc(TESTS[live.recording.test]?.name || '')} (${live.recording.rows.length})` : 'Record session'}</button>
         <button class="btn" data-act="readdtc">Read codes</button>`
       : `${native ? `${saved ? `<button class="btn primary" data-act="reconnect">Connect ${esc(saved.name || saved.address)}</button>` : ''}<button class="btn ${saved ? '' : 'primary'}" data-act="scan">Paired adapters</button><button class="btn" data-act="manual">Enter address</button>` : ''}
         ${serial ? '<button class="btn primary" data-act="serial">Connect adapter (COM/USB)</button><select data-baud title="USB adapters: try 38400, then 115200 or 9600"><option>38400</option><option>115200</option><option>9600</option></select>' : ''}
@@ -70,8 +94,12 @@ export async function renderObd(app, el) {
       <label>Update <select data-rate>${RATES.map(([ms, l]) => `<option value="${ms}" ${ms === live.cfg.rateMs ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
       <span class="muted" data-hz>${live.poller?.hz ? live.poller.hz.toFixed(1) + ' updates/s' : ''}</span>
     </div>
+    <p class="muted small budget-line" data-budget>${budgetLine(live.cfg.gauges, live.poller?.rps || live.rps)}</p>
     <div class="gauges">${live.cfg.gauges.map((ch) => gauge(ch)).join('')}</div>
     ${live.alerts.size ? `<ul class="list alerts">${[...live.alerts.values()].map((a) => `<li class="row-item"><span class="dot lv-${a.sev === 'critical' ? 'red' : a.sev === 'warn' ? 'orange' : 'yellow'}"></span>${esc(a.text)}</li>`).join('')}</ul>` : ''}
+    <div class="row small mode22"><span class="grow"><b>Ford extended PIDs (Mode 22):</b> ${esc(mode22Summary(m22))}${m22 ? ` <span class="muted">· checked ${fmtDate(m22.checkedAt.slice(0, 10))}</span>` : ''}</span>
+      ${live.status === 'connected' && !live.recording ? `<button class="btn small" data-act="mode22">${m22 ? 'Check again' : 'Check car'}</button>` : ''}</div>
+    ${m22 ? `<details class="small"><summary>Mode 22 replies (${m22.results.length})</summary><table class="tbl"><tr><th>Sent</th><th>Via</th><th>Reply</th><th>Means</th></tr>${m22.results.map((r) => `<tr><td>${esc(r.req)}</td><td>${esc(r.via)}</td><td><code>${esc(r.reply)}</code></td><td>${esc(M22_MEANS[r.verdict] || r.verdict)}</td></tr>`).join('')}</table></details>` : ''}
     <details class="small adapter-log" ${live.logOpen ? 'open' : ''}><summary>Adapter log <span class="muted">(${live.log.length})</span></summary>
       <div class="row small"><button class="btn small" data-act="logfs">⛶ Full screen</button><button class="btn small" data-act="logcopy">Copy</button></div>
       <pre class="log">${esc(live.log.slice(-60).join('\n'))}</pre></details>
@@ -95,9 +123,11 @@ export async function renderObd(app, el) {
     <label class="file">Choose CSV files<input type="file" accept=".csv,text/csv,text/plain" multiple data-csv></label>
   </section>
 
+  ${trendsCardHTML(sessions)}
+
   <section class="card">
     <h3>Sessions</h3>
-    ${sessions.length ? `<ul class="list">${sessions.map((s) => `<li class="row-item" data-session="${s.id}"><div class="grow"><div>${esc(s.name)}</div><div class="muted small">${fmtDate(s.date.slice(0, 10))} · ${esc(s.source)} · ${s.rowCount} rows${s.alerts?.length ? ` · <span class="txt-orange">${s.alerts.length} alerts</span>` : ''}</div></div><span>›</span></li>`).join('')}</ul>` : '<p class="muted small">No sessions yet.</p>'}
+    ${sessions.length ? `<ul class="list">${sessions.map((s) => `<li class="row-item" data-session="${s.id}"><div class="grow"><div>${esc(s.name)}</div><div class="muted small">${fmtDate(s.date.slice(0, 10))} · ${esc(TESTS[s.test || 'drive']?.name || s.test)} · ${esc(s.source)} · ${s.rowCount} rows${s.rows ? '' : ' · summary only'}${s.alerts?.length ? ` · <span class="txt-orange">${s.alerts.length} alerts</span>` : ''}</div></div><span>›</span></li>`).join('')}</ul>` : '<p class="muted small">No sessions yet.</p>'}
   </section>`;
 
   el.onclick = (e) => onClick(app, el, e);
@@ -113,6 +143,9 @@ export async function renderObd(app, el) {
     connect(app, el, new BluetoothTransport(), saved.address, saved.name);
   }
   el.querySelector('[data-csv]').onchange = (e) => importCsv(app, el, e.target.files);
+  const ts = el.querySelector('[data-test]');
+  if (ts) ts.onchange = () => { live.test = ts.value; };
+  bindTrends(app, el, sessions);
   el.querySelector('[data-manual-dtc]').onsubmit = async (e) => {
     e.preventDefault();
     const code = e.target.code.value.trim().toUpperCase();
@@ -212,9 +245,10 @@ async function onClick(app, el, e) {
     if (act === 'logcopy') { try { await navigator.clipboard.writeText(live.log.join('\n')); toast('Log copied'); } catch { toast('Copy failed'); } return; }
     if (act === 'rediag') { lastDiag = 0; return updateDiag(app); }
     if (act === 'gauges') return chooseGauges(app, el);
+    if (act === 'mode22') return checkMode22(app, el);
     if (act === 'record') {
       if (live.recording) return finishRecording(app, el);
-      live.recording = { t0: Date.now(), rows: [] };
+      live.recording = { t0: Date.now(), rows: [], test: live.test || 'drive', slow: {} };
       startRecordingNotice();
       renderObd(app, el);
     }
@@ -291,13 +325,14 @@ async function connect(app, el, transport, address, name) {
 }
 
 async function disconnect(app, el) {
+  if (live.poller?.rps) await saveAdapterRps(app.st.vehicle.id, live.poller.rps);
   live.poller?.stop();
   try { await live.transport?.disconnect(); } catch {}
   live.status = 'disconnected';
   live.elm = live.poller = live.transport = live.info = null;
   if (live.recording?.rows.length) {
     stopRecordingNotice();
-    await saveSession(app, { name: `Live session ${new Date().toLocaleString()}`, source: 'live', rows: live.recording.rows });
+    await saveSession(app, { name: `${TESTS[live.recording.test]?.name || 'Live session'} ${new Date().toLocaleString()}`, source: 'live', rows: live.recording.rows, test: live.recording.test });
   }
   stopRecordingNotice();
   live.recording = null;
@@ -311,7 +346,7 @@ async function finishRecording(app, el) {
   if (!r) return;
   live.recording = null;
   stopRecordingNotice();
-  await saveSession(app, { name: `Live session ${new Date().toLocaleString()}`, source: live.transport instanceof DemoTransport ? 'demo' : 'live', rows: r.rows });
+  await saveSession(app, { name: `${TESTS[r.test]?.name || 'Live session'} ${new Date().toLocaleString()}`, source: live.transport instanceof DemoTransport ? 'demo' : 'live', rows: r.rows, test: r.test });
   toast('Session saved');
   renderObd(app, el);
 }
@@ -333,6 +368,7 @@ function stopRecordingNotice() {
 }
 
 let lastFlagWrite = 0;
+let lastRpsSave = 0;
 let lastDiag = 0;
 function updateDiag(app) {
   if (!live.buf.length) return;
@@ -354,7 +390,20 @@ async function onSample(app, s) {
   live.buf.push({ ...live.sample, t });
   while (live.buf.length > 4000 || (live.buf.length && live.buf.at(-1).t - live.buf[0].t > 900)) live.buf.shift();
   if (Date.now() - lastDiag > 15000) updateDiag(app);
-  if (live.recording) live.recording.rows.push({ ...s, t: (s.t - live.recording.t0) / 1000 });
+  if (live.recording) {
+    // Slow channels are read every few cycles; carry their last raw value so
+    // every row knows coolant, trims and voltage (needed for engine state).
+    const rec = live.recording;
+    for (const [k, v] of Object.entries(s)) if (isSlow(k)) rec.slow[k] = v;
+    rec.rows.push({ ...rec.slow, ...s, t: (s.t - rec.t0) / 1000 });
+  }
+  if (live.poller?.rps && Date.now() - lastRpsSave > 30000) {
+    lastRpsSave = Date.now();
+    live.rps = live.poller.rps;
+    saveAdapterRps(app.st.vehicle.id, live.poller.rps);
+    const b = document.querySelector('#panel .obd-view [data-budget]');
+    if (b) b.innerHTML = budgetLine(live.cfg.gauges, live.poller.rps);
+  }
   const hits = sustain(live.sustainState, evaluate(live.sample), t);
   live.alertsByCh = {};
   for (const h of hits) {
@@ -393,7 +442,7 @@ async function recordDtcs(app, stored, pending) {
   await app.refresh({ keepPanel: true });
 }
 
-async function saveSession(app, { name, source, rows, mapping, unmatched }) {
+async function saveSession(app, { name, source, rows, mapping, unmatched, test = 'drive' }) {
   const stats = summarize(rows);
   // Evaluate rules on per-channel extremes to find problems in the log.
   const alerts = [];
@@ -401,7 +450,8 @@ async function saveSession(app, { name, source, rows, mapping, unmatched }) {
   for (const r of rows) {
     for (const h of evaluate(r)) if (!seen.has(h.code)) { seen.add(h.code); alerts.push({ ...h, at: r.t }); }
   }
-  return db.obdSessions.add({ vehicleId: app.st.vehicle.id, date: new Date().toISOString(), name, source, rowCount: rows.length, rows: downsample(rows), stats, alerts, mapping, unmatched });
+  const summary = summarizeSession(rows, test, app.st.vehicle);
+  return db.obdSessions.add({ uid: newUid(), vehicleId: app.st.vehicle.id, date: new Date().toISOString(), name, source, test, summary, rowCount: rows.length, rows: downsample(rows), stats, alerts, mapping, unmatched });
 }
 
 async function importCsv(app, el, files) {
@@ -424,24 +474,38 @@ async function openSession(app, id) {
   const s = await db.obdSessions.get(id);
   const codes = (await db.dtcs.where({ vehicleId: app.st.vehicle.id }).toArray()).filter((d) => d.active).map((d) => d.code);
   const diag = analyze(s.rows || [], { vehicle: app.st.vehicle, dtcs: codes });
-  const chans = Object.keys(s.stats).filter((c) => CHANNELS[c]);
+  const chans = Object.keys(s.stats || {}).filter((c) => CHANNELS[c]);
+  const test = s.test || 'drive';
+  const sm = s.summary?.metrics || {};
   const first = chans.includes('coolant') ? 'coolant' : chans[0];
   const html = `
-    <section class="diag" data-diag-sess><h4>Diagnosis</h4>${diagnosisHTML(app, diag, { compact: true })}</section>
+    <label>Test<select data-retag ${s.rows ? '' : 'disabled title="The raw log is on the device that recorded it"'}>${Object.entries(TESTS).map(([k, t]) => `<option value="${k}" ${k === test ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select></label>
+    <p class="muted small">${esc(TESTS[test]?.how || '')}</p>
+    ${Object.keys(sm).length ? `<table class="tbl"><tr><th>Summary (${esc(TESTS[test]?.name || test)})</th><th>Value</th><th>Healthy</th><th>Rows</th></tr>${Object.entries(sm).map(([id, m]) => { const d = METRICS[id], rg = metricRange(id, app.st.vehicle); return `<tr><td>${esc(d?.label || id)}</td><td><b>${m.v.toFixed(d?.dp ?? 1)}</b> ${esc(d?.unit || '')}</td><td class="muted">${rg ? (!Number.isFinite(rg[0]) ? `under ${rg[1].toFixed(d.dp)}` : !Number.isFinite(rg[1]) ? `over ${rg[0].toFixed(d.dp)}` : `${rg[0].toFixed(d.dp)} to ${rg[1].toFixed(d.dp)}`) : ''}</td><td class="muted">${m.n}</td></tr>`; }).join('')}</table>` : `<p class="muted small">No ${esc(TESTS[test]?.name.toLowerCase() || '')} rows found for a summary.</p>`}
+    ${s.rows ? '' : '<p class="callout">Summary only. The raw log stays on the device that recorded it.</p>'}
+    ${s.rows ? `<section class="diag" data-diag-sess><h4>Diagnosis</h4>${diagnosisHTML(app, diag, { compact: true })}</section>` : ''}
     ${s.alerts?.length ? `<div class="callout warn"><b>${s.alerts.length} issue${s.alerts.length > 1 ? 's' : ''} found in this log</b><ul>${s.alerts.map((a) => `<li>${esc(a.text)} <span class="muted small">at ${a.at?.toFixed?.(0) ?? '?'} s</span></li>`).join('')}</ul><button class="btn small" data-apply>Flag these parts</button></div>` : '<p class="muted small">No out-of-range readings found.</p>'}
-    <label>Chart<select data-ch>${chans.map((c) => `<option value="${c}" ${c === first ? 'selected' : ''}>${esc(CHANNELS[c].name)} (${esc(CHANNELS[c].unit)})</option>`).join('')}</select></label>
-    <canvas class="chart" width="900" height="260"></canvas>
-    <table class="tbl"><tr><th>Channel</th><th>Min</th><th>Avg</th><th>Max</th></tr>${chans.map((c) => { const st = s.stats[c], d = CHANNELS[c].dp; return `<tr><td>${esc(CHANNELS[c].name)}</td><td>${st.min.toFixed(d)}</td><td>${st.avg.toFixed(d)}</td><td>${st.max.toFixed(d)}</td></tr>`; }).join('')}</table>
+    ${s.rows ? `<label>Chart<select data-ch>${chans.map((c) => `<option value="${c}" ${c === first ? 'selected' : ''}>${esc(CHANNELS[c].name)} (${esc(CHANNELS[c].unit)})</option>`).join('')}</select></label>
+    <canvas class="chart" width="900" height="260"></canvas>` : ''}
+    ${chans.length ? '' : '<!--'}<table class="tbl"><tr><th>Channel</th><th>Min</th><th>Avg</th><th>Max</th></tr>${chans.map((c) => { const st = s.stats[c], d = CHANNELS[c].dp; return `<tr><td>${esc(CHANNELS[c].name)}</td><td>${st.min.toFixed(d)}</td><td>${st.avg.toFixed(d)}</td><td>${st.max.toFixed(d)}</td></tr>`; }).join('')}</table>${chans.length ? '' : '-->'}
     ${s.mapping ? `<details class="small"><summary>Column mapping</summary><ul>${Object.entries(s.mapping).map(([h, m]) => `<li>${esc(h)} → ${esc(CHANNELS[m.ch]?.name || m.ch)}</li>`).join('')}</ul>${s.unmatched?.length ? `<p class="muted">Not used: ${esc(s.unmatched.join(', '))}</p>` : ''}</details>` : ''}
-    <div class="row between"><button class="btn danger" data-del>Delete session</button><span><button class="btn" data-export>Export CSV</button> <button class="btn" data-close>Close</button></span></div>`;
+    <div class="row between"><button class="btn danger" data-del>Delete session</button><span>${s.rows ? '<button class="btn" data-export>Export CSV</button> ' : ''}<button class="btn" data-close>Close</button></span></div>`;
   modal(s.name, html, {
     wide: true,
     onMount: (root, close) => {
-      root.querySelector('[data-diag-sess]').onclick = (e) => onDiagClick(app, e, diag, { source: `log ${s.name}`, onDone: close });
+      const dg = root.querySelector('[data-diag-sess]');
+      if (dg) dg.onclick = (e) => onDiagClick(app, e, diag, { source: `log ${s.name}`, onDone: close });
       const cv = root.querySelector('canvas'), sel = root.querySelector('[data-ch]');
       const draw = () => drawChart(cv, s.rows, sel.value);
-      if (sel) { sel.onchange = draw; draw(); }
-      root.querySelector('[data-export]').onclick = () => exportObdSessionCsv(app.st, s);
+      if (sel && cv) { sel.onchange = draw; draw(); }
+      const ex = root.querySelector('[data-export]');
+      if (ex) ex.onclick = () => exportObdSessionCsv(app.st, s);
+      root.querySelector('[data-retag]').onchange = async (e) => {
+        await db.obdSessions.update(id, { test: e.target.value, summary: summarizeSession(s.rows || [], e.target.value, app.st.vehicle) });
+        close();
+        await renderObd(app, document.querySelector('#panel .obd-view') || lastEl);
+        openSession(app, id);
+      };
       root.querySelector('[data-del]').onclick = async () => { await db.obdSessions.delete(id); close(); app.refresh(); };
       const ap = root.querySelector('[data-apply]');
       if (ap) ap.onclick = async () => {
@@ -483,19 +547,104 @@ function drawChart(cv, rows, ch) {
   ctx.stroke();
 }
 
+// ---------- Session tests and trends ----------
+const newUid = () => (crypto.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`);
+
+// Sessions saved before trends existed get their summary once (needs the raw rows).
+async function backfillSummaries(app, sessions) {
+  for (const s of sessions) {
+    if (s.summary?.v === METRICS_V || !s.rows) continue;
+    s.test ||= 'drive';
+    s.summary = summarizeSession(s.rows, s.test, app.st.vehicle);
+    // No new uid here: older sessions match across devices by vehicle, date and name.
+    await db.obdSessions.update(s.id, { test: s.test, summary: s.summary });
+  }
+}
+
+function trendsCardHTML(sessions) {
+  const tests = Object.keys(TESTS).filter((t) => sessions.some((s) => (s.test || 'drive') === t && Object.keys(s.summary?.metrics || {}).length));
+  if (!tests.length) return `<section class="card"><h3>Trends</h3><p class="muted small">Record or import sessions and tag each with a test (warm idle, steady cruise, 2,500 rpm hold...). Each test gets a trend chart, one point per session, so you can compare this year's idle with last year's.</p></section>`;
+  const test = tests.includes(live.trendTest) ? live.trendTest : tests[0];
+  const metrics = availableMetrics(sessions, test);
+  const metric = metrics.includes(live.trendMetric) ? live.trendMetric : metrics[0];
+  return `<section class="card" data-trends>
+    <div class="sec-head"><h3>Trends</h3><button class="btn small" data-trend-csv>Export CSV</button></div>
+    <div class="row small"><label>Test <select data-trend-test>${tests.map((t) => `<option value="${t}" ${t === test ? 'selected' : ''}>${esc(TESTS[t].name)}</option>`).join('')}</select></label>
+      <label>Value <select data-trend-metric>${metrics.map((m) => `<option value="${m}" ${m === metric ? 'selected' : ''}>${esc(METRICS[m].label)}</option>`).join('')}</select></label></div>
+    <div data-trend-chart></div>
+  </section>`;
+}
+
+function bindTrends(app, el, sessions) {
+  const card = el.querySelector('[data-trends]');
+  if (!card) return;
+  const tSel = card.querySelector('[data-trend-test]'), mSel = card.querySelector('[data-trend-metric]');
+  const draw = () => {
+    live.trendTest = tSel.value; live.trendMetric = mSel.value;
+    const pts = trendPoints(sessions, tSel.value, mSel.value);
+    const box = card.querySelector('[data-trend-chart]');
+    box.innerHTML = trendSvg(pts, METRICS[mSel.value], metricRange(mSel.value, app.st.vehicle))
+      + `<ul class="list small trend-list">${pts.slice().reverse().slice(0, 6).map((p) => `<li class="row-item" data-session="${p.id}"><span class="grow">${fmtDate(p.date.slice(0, 10))} <span class="muted">${esc(p.name)}</span></span><b>${p.v.toFixed(METRICS[mSel.value].dp)} ${esc(METRICS[mSel.value].unit)}</b></li>`).join('')}</ul>`;
+  };
+  tSel.onchange = () => {
+    const ms = availableMetrics(sessions, tSel.value);
+    mSel.innerHTML = ms.map((m) => `<option value="${m}">${esc(METRICS[m].label)}</option>`).join('');
+    draw();
+  };
+  mSel.onchange = draw;
+  card.querySelector('[data-trend-csv]').onclick = () => exportTrendsCsv(app.st, sessions);
+  draw();
+}
+
+// ---------- Mode 22 check ----------
+const M22_MEANS = { positive: 'Answered', negative: 'Understood, refused this ID', unsupported: 'Mode 22 not supported', none: 'No answer' };
+async function checkMode22(app, el) {
+  if (!live.elm) return;
+  toast('Checking Mode 22… live data pauses for a few seconds', 4000);
+  const wasPolling = !!live.poller?.running;
+  await live.poller?.stop();
+  let res;
+  try {
+    res = await probeMode22(live.elm);
+  } finally {
+    if (wasPolling && live.status === 'connected') {
+      live.poller = new Poller(live.elm, pidsFor(live.cfg), (s) => onSample(app, s), { rateMs: live.cfg?.rateMs || 0 });
+      live.poller.start();
+    }
+  }
+  await db.vehicles.update(app.st.vehicle.id, { mode22: res });
+  toast(res.answered ? 'The car answers Mode 22' : 'No Mode 22 answer from this car', 5000);
+  await app.refresh();
+}
+
 // ---------- Gauge picker ----------
 function chooseGauges(app, el) {
   const sup = live.info ? new Set(live.info.supported) : null;
   const on = new Set(live.cfg.gauges);
+  const rps = live.poller?.rps || live.rps;
   const rows = PICKABLE.map((ch) => {
     const pid = ch === 'voltage' ? null : CH_PID[ch];
     const unsupported = sup && pid && !sup.has(pid);
-    return `<label class="pick ${unsupported ? 'muted' : ''}"><input type="checkbox" name="g" value="${ch}" ${on.has(ch) ? 'checked' : ''}> ${esc(CHANNELS[ch].name)} <span class="muted small">${esc(CHANNELS[ch].unit)}${pid ? ` · PID ${pid}` : ' · adapter'}${unsupported ? ' · not supported by this car' : ''}</span></label>`;
+    return `<label class="pick ${unsupported ? 'muted' : ''}"><input type="checkbox" name="g" value="${ch}" ${on.has(ch) ? 'checked' : ''}> ${esc(CHANNELS[ch].name)} <span class="muted small">${esc(CHANNELS[ch].unit)}${pid ? ` · PID ${pid}` : ' · adapter'}${isSlow(ch) ? ' · slow' : ''}${unsupported ? ' · not supported by this car' : ''}</span></label>`;
   }).join('');
-  modal('Choose gauges', `<form class="form"><p class="muted small">Only the gauges you pick are polled, so fewer gauges means faster updates. RPM and coolant are always read in the background for the health checks.${sup ? '' : ' Connect to see which PIDs this car supports.'}</p><div class="pick-list">${rows}</div><div class="row end"><button class="btn" type="button" data-all>All</button><button class="btn" type="button" data-none>None</button><button class="btn primary" type="submit">Save</button></div></form>`, {
+  modal('Choose gauges', `<form class="form"><p class="muted small">Only the gauges you pick are polled. A basic ELM327 answers about 5 to 10 requests per second in total, so each extra gauge slows the others. Slow channels (coolant, trims, voltage, temps) are read every 5th pass. RPM, coolant and run time are always read for the health checks.${sup ? '' : ' Connect to see which PIDs this car supports.'}</p>
+    <div class="budget" data-meter></div>
+    <div class="pick-list">${rows}</div><div class="row end"><button class="btn" type="button" data-all>All</button><button class="btn" type="button" data-none>None</button><button class="btn primary" type="submit">Save</button></div></form>`, {
     onMount: (w) => {
-      w.querySelector('[data-all]').onclick = () => w.querySelectorAll('[name=g]').forEach((c) => { c.checked = true; });
-      w.querySelector('[data-none]').onclick = () => w.querySelectorAll('[name=g]').forEach((c) => { c.checked = false; });
+      const meter = () => {
+        const picked = [...w.querySelectorAll('[name=g]:checked')].map((c) => c.value).filter((ch) => !(sup && CH_PID[ch] && !sup.has(CH_PID[ch])));
+        const e = estimate(polledChannels(picked), rps || DEFAULT_RPS);
+        const pct = Math.min(100, (e.units / e.maxUnits) * 100);
+        w.querySelector('[data-meter]').innerHTML = `<div class="budget-bar"><i class="${e.ok ? (pct > 75 ? 'b-warn' : 'b-ok') : 'b-over'}" style="width:${pct.toFixed(0)}%"></i></div>
+          <div class="small">${e.fast.length} fast + ${e.slow.length} slow channels · ${e.units.toFixed(1)} requests per pass at ${rps ? `${e.rps.toFixed(1)} req/s measured` : `${DEFAULT_RPS} req/s (typical, not measured yet)`}</div>
+          <div class="small"><b>Fast gauges ${fmtPeriod(e.fastPeriod)}</b> · slow ${fmtPeriod(e.slowPeriod)}${e.o2Ok ? '' : ` · <span class="txt-orange">O2 switching check needs ${O2_MIN_HZ}× / s: pick fewer fast gauges while checking O2 sensors</span>`}</div>
+          ${e.ok ? '' : `<div class="small txt-red">Too many for this adapter: fast gauges would update slower than every ${MAX_FAST_PERIOD} s. Remove some to save.</div>`}`;
+        w.querySelector('[type=submit]').disabled = !e.ok;
+      };
+      w.querySelector('[data-all]').onclick = () => { w.querySelectorAll('[name=g]').forEach((c) => { c.checked = true; }); meter(); };
+      w.querySelector('[data-none]').onclick = () => { w.querySelectorAll('[name=g]').forEach((c) => { c.checked = false; }); meter(); };
+      w.querySelectorAll('[name=g]').forEach((c) => { c.onchange = meter; });
+      meter();
     },
     onSubmit: async (fd) => {
       const picked = new Set(fd.getAll('g'));

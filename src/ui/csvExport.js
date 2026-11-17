@@ -4,6 +4,7 @@ import { LEVELS } from '../data/health.js';
 import { inspectionDefs } from '../data/repo.js';
 import { evaluateTest } from '../data/inspection.js';
 import { CHANNELS } from '../obd/pids.js';
+import { TESTS, METRICS, TEST_METRICS } from '../obd/trends.js';
 import { download } from './util.js';
 
 // CSV exports. Everything opens in Excel / Google Sheets. OBD sessions use
@@ -91,6 +92,17 @@ export function exportObdSessionCsv(st, s) {
   const rows = [['Time (sec)', ...chans.map((c) => `${CHANNELS[c].name} (${CHANNELS[c].unit})`)]];
   for (const r of s.rows || []) rows.push([r1(r.t), ...chans.map((c) => (r[c] == null ? '' : +r[c].toFixed(Math.max(CHANNELS[c].dp, 1))))]);
   download(new Blob([toCsv(rows)], { type: 'text/csv' }), `${slug(s.name.replace(/\.csv$/i, ''))}-${slug(st.vehicle.name)}.csv`);
+}
+
+// One row per session: its test and summary numbers. Small, so it's the version to share.
+export function exportTrendsCsv(st, sessions) {
+  const ids = [...new Set(Object.values(TEST_METRICS).flat())];
+  const rows = [['Date', 'Session', 'Test', 'Source', 'Rows', ...ids.map((id) => `${METRICS[id].label} (${METRICS[id].unit})`)]];
+  for (const s of sessions.slice().sort((a, b) => (a.date < b.date ? -1 : 1))) {
+    const m = s.summary?.metrics || {};
+    rows.push([s.date.slice(0, 10), s.name, TESTS[s.test || 'drive']?.name || s.test, s.source, s.rowCount, ...ids.map((id) => (m[id] ? +m[id].v.toFixed(METRICS[id].dp) : ''))]);
+  }
+  save(st, 'obd-trends', rows);
 }
 
 export function exportInspectionCsv(st, run) {

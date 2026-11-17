@@ -59,6 +59,7 @@ export async function renderGarage(app, el) {
     const t = e.target.closest('[data-act],[data-vehicle],[data-unhide],[data-csv-x],[data-sync]');
     if (t?.dataset.sync) return onSyncClick(app, t.dataset.sync, () => renderGarage(app, el));
     if (e.target.matches('[data-keep-on]')) return setKeepScreenOn(e.target.checked);
+    if (e.target.matches('[data-sync-obd]')) return onSyncClick(app, e.target.checked ? 'obd-on' : 'obd-off', () => renderGarage(app, el));
     if (!t) return;
     if (t.dataset.vehicle) { await setSetting('currentVehicle', +t.dataset.vehicle); return app.loadVehicle(+t.dataset.vehicle); }
     if (t.dataset.unhide) { await db.parts.update(+t.dataset.unhide, { hidden: false, userHidden: false }); return app.refresh(); }

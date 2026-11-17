@@ -1,4 +1,4 @@
-import { getConfig, saveConfig, disconnect, syncNow, syncState, onSyncStatus, startAutoSync } from '../sync/githubSync.js';
+import { getConfig, saveConfig, disconnect, syncNow, syncState, onSyncStatus, startAutoSync, obdSyncMode, setObdSyncMode } from '../sync/githubSync.js';
 import { esc, modal, toast, fmtDate } from './util.js';
 
 // Conflict prompt shared by manual and automatic syncs.
@@ -33,6 +33,7 @@ export function initSync() {
 export async function syncCardHTML() {
   const cfg = await getConfig();
   const st = await syncState();
+  const obd = await obdSyncMode();
   if (!cfg) return `<section class="card"><div class="sec-head"><h3>Sync phone ⇄ PC</h3><button class="btn small primary" data-sync="setup">Set up</button></div>
     <p class="muted small">Keeps the phone and PC in step through a private GitHub repo you own, including photos and receipts.</p></section>`;
   return `<section class="card"><div class="sec-head"><h3>Sync phone ⇄ PC</h3><button class="btn small primary" data-sync="now">Sync now</button></div>
@@ -40,6 +41,8 @@ export async function syncCardHTML() {
     <dt>Last sync</dt><dd>${st.lastSync ? `${esc(new Date(st.lastSync).toLocaleString())}${st.lastAction ? ` · ${esc(st.lastAction)}` : ''}` : 'never'}</dd>
     <dt>Local changes</dt><dd>${st.dirty ? 'waiting to send' : 'none'}</dd></dl>
     <p class="muted small">Syncs automatically when the app opens and about 15 seconds after you change something.</p>
+    <label class="chk small"><input type="checkbox" data-sync-obd ${obd === 'summary' ? 'checked' : ''}> Send OBD session summaries from this device</label>
+    <p class="muted small">Off by default. When on, only each session's test, summary numbers, min/avg/max and alerts are sent, so trends show on your other device. Raw logs always stay on the device that recorded them.</p>
     <div class="actions"><button class="btn small" data-sync="setup">Change</button><button class="btn small danger" data-sync="off">Disconnect</button></div></section>`;
 }
 
@@ -47,6 +50,12 @@ export async function onSyncClick(app, action, rerender) {
   if (action === 'now') {
     const r = await syncNow(syncOpts());
     toast(r.action === 'error' ? `Sync failed: ${r.error.message}` : r.action === 'push' ? 'Sent to GitHub' : r.action === 'pull' ? 'Received from GitHub' : r.action === 'conflict' ? 'Sync paused' : 'Up to date', 4000);
+    return rerender();
+  }
+  if (action === 'obd-on' || action === 'obd-off') {
+    await setObdSyncMode(action === 'obd-on' ? 'summary' : 'off');
+    toast(action === 'obd-on' ? 'OBD summaries will sync (no raw logs)' : 'OBD session data stays on this device');
+    syncNow(syncOpts());
     return rerender();
   }
   if (action === 'off') { await disconnect(); toast('Sync disconnected. Data stays on this device.'); return rerender(); }
