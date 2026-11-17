@@ -275,7 +275,18 @@ export function inspectionDefs(vehicle) {
   const tests = buildTests(vehicle.options).map((t) => {
     const ov = vc?.testSpecs?.[t.id];
     if (!ov) return t;
-    return { ...t, ...(ov.criteria ? { criteria: ov.criteria } : {}), readings: t.readings.map((r) => ({ ...r, ...(ov.readings?.[r.id] || {}) })) };
+    // A vehicle catalog can replace criteria, steps, tools and the extra
+    // rules, add readings, and change a reading's limits (null clears one).
+    // spec = { source, verified, note } tells the owner where numbers came from.
+    return {
+      ...t,
+      ...(ov.criteria ? { criteria: ov.criteria } : {}),
+      ...(ov.steps ? { steps: ov.steps } : {}),
+      ...(ov.tools ? { tools: ov.tools } : {}),
+      ...(ov.evaluate ? { evaluate: ov.evaluate } : {}),
+      ...(ov.spec ? { spec: ov.spec } : {}),
+      readings: [...t.readings.map((r) => ({ ...r, ...(ov.readings?.[r.id] || {}) })), ...(ov.addReadings || [])],
+    };
   });
   return { items: buildInspection(vehicle.options), tests };
 }

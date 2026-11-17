@@ -341,11 +341,12 @@ export function buildTests(o) {
       { id: 'dry', label: 'Dry compression', unit: 'psi', count: cyl, labels: cylLabels(cyl), nominal: 170, limit: 120, apply: 'engine', applyAs: 'min' },
       { id: 'wet', label: 'Wet compression (low cylinders only)', unit: 'psi', count: cyl, labels: cylLabels(cyl), optional: true },
     ],
-    criteria: 'Lowest cylinder at least 75% of the highest (Ford rule). Wet rise of 10%+ points to rings; no rise points to valves or head gasket. Two low adjacent cylinders suggest a head gasket.',
+    criteria: 'Lowest cylinder at least 75% of the highest (Ford rule); spread over about 10% is worth watching. Wet rise of 10%+ points to rings; no rise points to valves or head gasket. Two low adjacent cylinders suggest a head gasket.',
     evaluate: (v) => {
       const out = [];
       const sp = spreadPct(v.dry || []);
-      if (sp != null) out.push({ status: sp > 25 ? 'fail' : sp > 15 ? 'watch' : 'pass', text: `Cylinder spread ${sp.toFixed(0)}%` });
+      // Fail past the Ford 75% rule (25% spread); watch past about 10%.
+      if (sp != null) out.push({ status: sp > 25 ? 'fail' : sp > 10 ? 'watch' : 'pass', text: `Cylinder spread ${sp.toFixed(0)}%${sp > 25 ? ' (lowest under 75% of highest)' : sp > 10 ? ' (over about 10%)' : ''}` });
       const dry = v.dry || [], wet = v.wet || [];
       for (let i = 0; i < cyl; i++) if (wet[i] && dry[i] && +wet[i] > +dry[i] * 1.1) out.push({ status: 'watch', text: `Cyl ${i + 1} rises wet (${dry[i]}→${wet[i]}): ring wear` });
       // Neighbors on the same bank (Ford-style numbering: bank 1 = 1..n/2).
@@ -450,9 +451,10 @@ export function buildTests(o) {
     readings: [{ id: 'v', label: 'Cranking voltage', unit: 'V', nominal: 10.5, limit: 9.6 }, { id: 'a', label: 'Starter current', unit: 'A', nominal: 150, limit: 250 }],
     criteria: 'Above 9.6 V; amps within spec (high draw = tight engine or bad starter).' });
   add({ id: 't_charging', group: 'Electrical', name: 'Charging system output', parts: ['alternator', 'belt'], tools: ['Multimeter', 'Amp clamp'],
-    steps: ['2000 rpm, loads off: voltage.', 'All loads on (lights high, blower high, defrost): voltage and amps.', 'AC ripple at the alternator output.'],
-    readings: [{ id: 'nl', label: 'No load', unit: 'V', nominal: 14.2, limit: 13.2, apply: 'alternator' }, { id: 'fl', label: 'Full load', unit: 'V', nominal: 13.8, limit: 12.8 }, { id: 'ripple', label: 'AC ripple', unit: 'V AC', nominal: 0, limit: 0.5 }],
-    criteria: '13.5-14.8 V. AC ripple under 0.5 V (more = failing diode).' });
+    steps: ['Warm idle, loads off: voltage at the battery.', '2000 rpm, loads off: voltage.', 'All loads on (lights high, blower high, defrost): voltage and amps.', 'AC ripple at the alternator output.'],
+    readings: [{ id: 'idle', label: 'Idle, loads off', unit: 'V', nominal: 14.2, limit: 12.8 }, { id: 'nl', label: '2000 rpm, loads off', unit: 'V', nominal: 14.2, limit: 13.2, apply: 'alternator' }, { id: 'fl', label: 'Full load', unit: 'V', nominal: 13.8, limit: 12.8 }, { id: 'ripple', label: 'AC ripple', unit: 'V AC', nominal: 0, limit: 0.5 }],
+    criteria: '13.5-14.8 V. AC ripple under 0.5 V (more = failing diode).',
+    evaluate: (v) => ['idle', 'nl', 'fl'].filter((k) => v[k] != null && v[k] !== '' && +v[k] > 14.8).map((k) => ({ status: 'watch', text: `${k === 'idle' ? 'Idle' : k === 'nl' ? '2000 rpm' : 'Full load'} ${v[k]} V is above 14.8 V: check for overcharging` })) });
   add({ id: 't_voltage_drop', group: 'Electrical', name: 'Voltage drop (cables & grounds)', parts: ['battery', 'starter', 'alternator'], tools: ['Multimeter'],
     steps: ['While cranking, measure across battery + to starter stud.', 'Battery − to engine block.', 'At 2000 rpm with loads on: alternator output to battery +.'],
     readings: [{ id: 'pos', label: 'Positive cable', unit: 'V', nominal: 0, limit: 0.5 }, { id: 'neg', label: 'Ground side', unit: 'V', nominal: 0, limit: 0.3 }, { id: 'alt', label: 'Alternator output wire', unit: 'V', nominal: 0, limit: 0.5 }],
