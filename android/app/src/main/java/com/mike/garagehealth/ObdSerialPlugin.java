@@ -29,8 +29,13 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
+
 
 /**
  * Minimal Bluetooth Classic (SPP / RFCOMM) bridge for ELM327 adapters.
@@ -152,14 +157,22 @@ public class ObdSerialPlugin extends Plugin {
                             int n = in.read(buf);
                             if (n < 0) break;
                             if (n == 0) continue;
+                            String chunk = new String(buf, 0, n, StandardCharsets.ISO_8859_1);
+                            if (nativeMode) {
+                                // Native poll loop owns the link: replies go to execNative, not the WebView.
+                                synchronized (nbuf) { nbuf.append(chunk); nbuf.notifyAll(); }
+                                continue;
+                            }
                             JSObject ev = new JSObject();
-                            ev.put("value", new String(buf, 0, n, StandardCharsets.ISO_8859_1));
+                            ev.put("value", chunk);
                             notifyListeners("data", ev);
                         }
                     } catch (IOException ignored) {
                     }
                     if (socket == mine) {
                         closeQuietly();
+                        polling = false;
+                        synchronized (nbuf) { nbuf.notifyAll(); }
                         notifyListeners("disconnected", new JSObject());
                     }
                 });
@@ -189,6 +202,202 @@ public class ObdSerialPlugin extends Plugin {
         }
     }
 
+    // ---------- Native poll loop ----------
+    // The WebView's timers are throttled or paused when another app (Spotify,
+    // Maps) is in front, which leaves gaps in a recording. While a live session
+    // runs, this thread does the request/reply loop itself and buffers every
+    // raw reply; the web app drains the buffer whenever it gets to run and
+    // decodes the replies with the same PID formulas as before.
+
+    private static final int MAX_SAMPLES = 200000; // about 5.5 h at 10 passes/s
+    private final StringBuilder nbuf = new StringBuilder();
+    private final ReentrantLock io = new ReentrantLock(true); // fair: JS commands get a turn between PIDs
+    private volatile boolean nativeMode = false;
+    private volatile boolean polling = false;
+    private volatile String[] pollPids = new String[0];
+    private volatile long rateMs = 0;
+    private volatile double hz = 0;
+    private Thread poller;
+    private final Object sleeper = new Object();
+    private final List<JSObject> samples = new ArrayList<>();
+    private int dropped = 0;
+    private volatile long recStart = 0;
+    private volatile int recRows = 0;
+
+    /** Send one command and wait for the ELM327 prompt. Returns null on timeout. */
+    private String execNative(String cmd, long timeoutMs) throws IOException, InterruptedException {
+        if (!io.tryLock(timeoutMs + 2000, TimeUnit.MILLISECONDS)) return null;
+        try {
+            OutputStream o = out;
+            if (o == null) throw new IOException("Not connected");
+            synchronized (nbuf) { nbuf.setLength(0); }
+            o.write((cmd + "\r").getBytes(StandardCharsets.ISO_8859_1));
+            o.flush();
+            long end = System.currentTimeMillis() + timeoutMs;
+            synchronized (nbuf) {
+                while (true) {
+                    int p = nbuf.lastIndexOf(">");
+                    if (p >= 0) {
+                        String r = nbuf.substring(0, p);
+                        nbuf.setLength(0);
+                        return r;
+                    }
+                    if (out == null) throw new IOException("Adapter disconnected");
+                    long left = end - System.currentTimeMillis();
+                    if (left <= 0) return null;
+                    nbuf.wait(left);
+                }
+            }
+        } finally {
+            io.unlock();
+        }
+    }
+
+    private static String[] toPids(JSArray arr) {
+        if (arr == null) return new String[0];
+        List<String> l = new ArrayList<>();
+        for (int i = 0; i < arr.length(); i++) {
+            String p = arr.optString(i, "");
+            if (p.matches("[0-9A-Fa-f]{2}")) l.add(p.toUpperCase());
+        }
+        return l.toArray(new String[0]);
+    }
+
+    /** Start the native loop: { pids: ["0C","05",...], rateMs }. */
+    @PluginMethod
+    public void startPoll(PluginCall call) {
+        if (out == null) { call.reject("Not connected"); return; }
+        stopPollThread();
+        pollPids = toPids(call.getArray("pids"));
+        rateMs = Math.max(0, call.getLong("rateMs", 0L));
+        synchronized (samples) { samples.clear(); dropped = 0; }
+        synchronized (nbuf) { nbuf.setLength(0); }
+        nativeMode = true;
+        polling = true;
+        poller = new Thread(this::pollLoop, "obd-poll");
+        poller.setDaemon(true);
+        poller.start();
+        call.resolve();
+    }
+
+    /** Change PIDs or rate while running. */
+    @PluginMethod
+    public void updatePoll(PluginCall call) {
+        if (call.getData().has("pids")) pollPids = toPids(call.getArray("pids"));
+        if (call.getData().has("rateMs")) rateMs = Math.max(0, call.getLong("rateMs", 0L));
+        wakePoller(); // cut a long sleep short (never interrupts a command in flight)
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void stopPoll(PluginCall call) {
+        stopPollThread();
+        nativeMode = false;
+        call.resolve();
+    }
+
+    private void wakePoller() {
+        synchronized (sleeper) { sleeper.notifyAll(); }
+    }
+
+    private void stopPollThread() {
+        polling = false;
+        wakePoller();
+        Thread t = poller;
+        poller = null;
+        // Let the command in flight finish (at most its 4 s timeout) so the adapter isn't left mid-reply.
+        if (t != null) try { t.join(6000); } catch (InterruptedException ignored) {}
+    }
+
+    /** Everything recorded since the last drain: { samples: [{ t, r: { pid: reply }, v: reply }], hz, running, dropped }. */
+    @PluginMethod
+    public void drainPoll(PluginCall call) {
+        JSArray arr = new JSArray();
+        int d;
+        synchronized (samples) {
+            for (JSObject o : samples) arr.put(o);
+            samples.clear();
+            d = dropped;
+            dropped = 0;
+        }
+        JSObject res = new JSObject();
+        res.put("samples", arr);
+        res.put("hz", hz);
+        res.put("running", polling);
+        res.put("dropped", d);
+        call.resolve(res);
+    }
+
+    /** One command through the native link, used for code reads etc. while the loop runs. */
+    @PluginMethod
+    public void exec(PluginCall call) {
+        final String cmd = call.getString("cmd", "");
+        final long timeout = call.getLong("timeout", 4000L);
+        new Thread(() -> {
+            try {
+                String r = execNative(cmd, timeout);
+                if (r == null) { call.reject("Timeout on " + cmd); return; }
+                JSObject res = new JSObject();
+                res.put("value", r);
+                call.resolve(res);
+            } catch (Exception e) {
+                call.reject(e.getMessage() != null ? e.getMessage() : "Command failed");
+            }
+        }).start();
+    }
+
+    private void pollLoop() {
+        long n = 0;
+        long lastNote = 0;
+        while (polling && out != null) {
+            long t0 = System.currentTimeMillis();
+            JSObject sample = new JSObject();
+            JSObject r = new JSObject();
+            boolean moduleVolts = false;
+            try {
+                for (String pid : pollPids) {
+                    if (!polling) break;
+                    String reply = execNative("01" + pid, 4000);
+                    if (reply == null) continue; // skip one slow PID, same as the web loop
+                    r.put(pid, reply);
+                    if (pid.equals("42") && reply.replaceAll("\\s", "").toUpperCase().contains("4142")) moduleVolts = true;
+                }
+                // Same rule as the web loop: adapter voltage every pass, or every 5th when PID 42 answers.
+                if (polling && (n++ % 5 == 0 || !moduleVolts)) {
+                    String v = execNative("ATRV", 4000);
+                    if (v != null) sample.put("v", v);
+                }
+            } catch (InterruptedException | IOException e) {
+                break;
+            }
+            if (!polling) break;
+            sample.put("t", t0);
+            sample.put("r", r);
+            synchronized (samples) {
+                if (samples.size() >= MAX_SAMPLES) { samples.remove(0); dropped++; }
+                samples.add(sample);
+            }
+            if (recStart > 0) {
+                recRows++;
+                long now = System.currentTimeMillis();
+                if (now - lastNote > 5000) {
+                    lastNote = now;
+                    long s = (now - recStart) / 1000;
+                    ObdRecordService.update(getContext(), String.format(java.util.Locale.US, "%d:%02d · %d rows", s / 60, s % 60, recRows));
+                }
+            }
+            long left = rateMs - (System.currentTimeMillis() - t0);
+            if (left > 0 && polling) {
+                synchronized (sleeper) {
+                    try { sleeper.wait(left); } catch (InterruptedException e) { break; }
+                }
+            }
+            long dt = System.currentTimeMillis() - t0;
+            hz = dt > 0 ? 1000.0 / dt : 0;
+        }
+        polling = false;
+    }
+
     /** The plugin instance the background recording service talks back to. */
     static ObdSerialPlugin current;
 
@@ -198,6 +407,7 @@ public class ObdSerialPlugin extends Plugin {
     @PluginMethod
     public void startRecording(PluginCall call) {
         current = this;
+        if (recStart == 0) { recStart = System.currentTimeMillis(); recRows = 0; }
         if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(getContext(), Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED && getActivity() != null) {
             ActivityCompat.requestPermissions(getActivity(), new String[]{Manifest.permission.POST_NOTIFICATIONS}, 7);
         }
@@ -208,6 +418,7 @@ public class ObdSerialPlugin extends Plugin {
 
     @PluginMethod
     public void stopRecording(PluginCall call) {
+        recStart = 0;
         getContext().stopService(new Intent(getContext(), ObdRecordService.class));
         call.resolve();
     }
@@ -225,6 +436,8 @@ public class ObdSerialPlugin extends Plugin {
 
     @PluginMethod
     public void disconnect(PluginCall call) {
+        stopPollThread();
+        nativeMode = false;
         closeQuietly();
         call.resolve();
     }
@@ -234,10 +447,12 @@ public class ObdSerialPlugin extends Plugin {
         socket = null;
         out = null;
         if (s != null) try { s.close(); } catch (IOException ignored) {}
+        synchronized (nbuf) { nbuf.notifyAll(); }
     }
 
     @Override
     protected void handleOnDestroy() {
+        polling = false;
         closeQuietly();
     }
 }

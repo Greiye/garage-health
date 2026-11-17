@@ -27,7 +27,7 @@ export class BluetoothTransport {
     address = normalizeMac(address);
     if (!address) throw new Error('Enter the adapter address as 6 pairs, e.g. 11:33:77:54:00:34');
     this.listener = await ObdSerial.addListener('data', ({ value }) => this.onData(value));
-    this.dropListener = await ObdSerial.addListener('disconnected', () => { this.address = null; this.waiter?.reject?.(new Error('Adapter disconnected')); });
+    this.dropListener = await ObdSerial.addListener('disconnected', () => { this.address = null; this.waiter?.reject?.(new Error('Adapter disconnected')); this.onDrop?.(); });
     try {
       await ObdSerial.connect({ address });
     } catch (e) {
@@ -47,6 +47,8 @@ export class BluetoothTransport {
     }
   }
   async send(cmd, timeout = 4000) {
+    // While the native poll loop owns the link, commands go through it so they never overlap.
+    if (this.nativeMode) return (await ObdSerial.exec({ cmd, timeout })).value;
     this.buffer = '';
     const done = new Promise((resolve, reject) => {
       this.waiter = { resolve, reject };
@@ -66,8 +68,10 @@ export class BluetoothTransport {
     this.listener = this.dropListener = null;
   }
   async disconnect() {
+    this.onDrop = null;
     await this.removeListeners();
     try { await ObdSerial.disconnect(); } catch {}
+    this.nativeMode = false;
     this.address = null;
   }
 }
@@ -298,15 +302,19 @@ export class Elm327 {
     return null;
   }
   async readPid(pid) {
+    return this.decodePid(pid, await this.cmd('01' + pid));
+  }
+  decodePid(pid, r) {
     const def = PIDS[pid];
-    const r = await this.cmd('01' + pid);
-    const bytes = this.dataBytes(r, pid);
+    const bytes = this.dataBytes(r || '', pid);
     if (!bytes || bytes.length < def.bytes) return null;
     return def.f(bytes);
   }
   async readVoltage() {
-    const r = await this.cmd('ATRV');
-    const v = parseFloat(r);
+    return this.decodeVoltage(await this.cmd('ATRV'));
+  }
+  decodeVoltage(r) {
+    const v = parseFloat(String(r || '').replace(/^\s*ATRV\s*/i, ''));
     return Number.isFinite(v) ? v : null;
   }
   async readDtcs() {
@@ -359,6 +367,92 @@ export class Poller {
     }
   }
   stop() { this.running = false; this.wake?.(); }
+}
+
+// Native poll loop (Android, Bluetooth Classic). Same interface and same samples
+// as Poller, but the request/reply loop runs on a native thread, so it keeps
+// going at full rate while the WebView is throttled behind Spotify or Maps.
+// Raw replies are buffered natively; this drains them whenever JS gets to run
+// and decodes them with the same PID formulas. Falls back to Poller on error.
+export class NativePoller {
+  constructor(elm, pids, onSample, { rateMs = 0 } = {}) {
+    this.elm = elm;
+    this.onSample = onSample;
+    this.rateMs = rateMs;
+    this.running = false;
+    this.hz = 0;
+    this.native = true;
+    this.setPids(pids);
+  }
+  static available(transport) { return transport instanceof BluetoothTransport; }
+  setPids(pids) {
+    this.pids = [...new Set(pids)].filter((p) => this.elm.supported.has(p));
+    if (this.fallback) return this.fallback.setPids(pids);
+    if (this.running) ObdSerial.updatePoll({ pids: this.pids }).catch(() => {});
+  }
+  setRate(ms) {
+    this.rateMs = ms;
+    if (this.fallback) return this.fallback.setRate(ms);
+    if (this.running) ObdSerial.updatePoll({ rateMs: ms }).catch(() => {});
+  }
+  async start() {
+    this.running = true;
+    try {
+      // Switch inside the command queue, so no web-side command is mid-reply when the native loop takes the link.
+      await this.inQueue(async () => {
+        this.elm.t.nativeMode = true;
+        await ObdSerial.startPoll({ pids: this.pids, rateMs: this.rateMs });
+      });
+    } catch (e) {
+      this.elm.t.nativeMode = false;
+      this.native = false;
+      this.elm.log(`(native poll unavailable: ${e.message || e}; using the in-app loop)`);
+      this.fallback = new Poller(this.elm, this.pids, this.onSample, { rateMs: this.rateMs });
+      Object.defineProperty(this, 'hz', { get: () => this.fallback.hz, configurable: true });
+      return this.fallback.start();
+    }
+    this.timer = setInterval(() => this.flush(), 200);
+  }
+  inQueue(fn) {
+    const run = this.elm.queue.then(fn);
+    this.elm.queue = run.catch(() => {});
+    return run;
+  }
+  // Pull everything the native loop recorded since last time and emit it in order.
+  // Only the last sample of a batch is marked live, so a big catch-up batch after
+  // the app comes back to the front doesn't redraw the gauges thousands of times.
+  flush() {
+    if (this.fallback || !this.native) return Promise.resolve();
+    if (this.flushing) return this.flushing;
+    this.flushing = (async () => {
+      try {
+        const { samples = [], hz, dropped } = await ObdSerial.drainPoll();
+        if (hz != null) this.hz = hz;
+        if (dropped) this.elm.log(`(native buffer full: ${dropped} oldest samples dropped)`);
+        for (let i = 0; i < samples.length; i++) {
+          const raw = samples[i];
+          const s = { t: raw.t };
+          for (const [pid, reply] of Object.entries(raw.r || {})) {
+            if (!PIDS[pid]) continue;
+            try { const v = this.elm.decodePid(pid, reply); if (v != null) s[PIDS[pid].ch] = v; } catch {}
+          }
+          if (raw.v != null) { const v = this.elm.decodeVoltage(raw.v); if (v != null) s.voltage = v; }
+          await this.onSample(s, { batch: i < samples.length - 1 });
+        }
+      } catch {} finally { this.flushing = null; }
+    })();
+    return this.flushing;
+  }
+  async stop() {
+    if (this.fallback) return this.fallback.stop();
+    this.running = false;
+    clearInterval(this.timer);
+    await this.inQueue(async () => {
+      try { await ObdSerial.stopPoll(); } catch {}
+      this.elm.t.nativeMode = false;
+    }).catch(() => {});
+    await this.flush();
+  }
 }
 
 // Background recording: a foreground service keeps the recording alive with another app in front.
