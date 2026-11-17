@@ -38,22 +38,22 @@ export function buildPartList(o) {
   add({ key: 'engine', name: 'Engine (long block)', system: 'Engine', slot: 'engine', im: 0, mo: 0,
     measure: { label: 'Lowest compression', unit: 'psi', nominal: 170, limit: 120 },
     note: 'Log compression or leak-down results as measurements. Spread over 10% between cylinders is worth a symptom flag.' });
-  add({ key: 'intake_gasket', name: 'Intake manifold gaskets', system: 'Engine', slot: 'intake', im: 0, mo: 0 });
-  add({ key: 'valve_cover_gaskets', name: 'Valve cover gaskets', system: 'Engine', slot: 'engine', im: 0, mo: 0 });
-  add({ key: 'head_gaskets', name: 'Head gaskets', system: 'Engine', slot: 'engine', im: 0, mo: 0 });
-  add({ key: 'timing', name: o.timing === 'belt' ? 'Timing belt' : 'Timing chain & guides', system: 'Engine', slot: 'engine',
+  add({ key: 'intake_gasket', name: 'Intake manifold gaskets', system: 'Engine', slot: 'intakeGasket', im: 0, mo: 0 });
+  add({ key: 'valve_cover_gaskets', name: 'Valve cover gaskets', system: 'Engine', ...(v ? { slot: 'valveCover_L', also: ['valveCover_R'] } : { slot: 'valveCover' }), im: 0, mo: 0 });
+  add({ key: 'head_gaskets', name: 'Head gaskets', system: 'Engine', ...(v ? { slot: 'headGasket_L', also: ['headGasket_R'] } : { slot: 'headGasket' }), im: 0, mo: 0 });
+  add({ key: 'timing', name: o.timing === 'belt' ? 'Timing belt' : 'Timing chain & guides', system: 'Engine', slot: 'frontCover',
     im: o.timing === 'belt' ? 90000 : 0, mo: o.timing === 'belt' ? 84 : 0 });
   add({ key: 'pcv', name: 'PCV valve', system: 'Engine', slot: 'intake', im: 60000, mo: 60 });
-  add({ key: 'engine_mount_L', name: 'Engine mount left', system: 'Engine', slot: 'mounts', position: 'L', im: 0, mo: 0 });
-  add({ key: 'engine_mount_R', name: 'Engine mount right', system: 'Engine', slot: 'mounts', position: 'R', im: 0, mo: 0 });
-  add({ key: 'front_cover', name: 'Timing cover gasket & front crank seal', system: 'Engine', slot: 'engine', im: 0, mo: 0 });
-  add({ key: 'rear_main_seal', name: 'Rear main seal', system: 'Engine', slot: 'engine', im: 0, mo: 0 });
-  add({ key: 'cam_sensor', name: 'Camshaft position sensor', system: 'Engine', slot: 'engine', im: 0, mo: 0 });
-  add({ key: 'crank_sensor', name: 'Crankshaft position sensor', system: 'Engine', slot: 'engine', im: 0, mo: 0 });
+  add({ key: 'engine_mount_L', name: 'Engine mount left', system: 'Engine', slot: 'mount_L', position: 'L', im: 0, mo: 0 });
+  add({ key: 'engine_mount_R', name: 'Engine mount right', system: 'Engine', slot: 'mount_R', position: 'R', im: 0, mo: 0 });
+  add({ key: 'front_cover', name: 'Timing cover gasket & front crank seal', system: 'Engine', slot: 'frontCover', im: 0, mo: 0 });
+  add({ key: 'rear_main_seal', name: 'Rear main seal', system: 'Engine', slot: 'rearMain', im: 0, mo: 0 });
+  add({ key: 'cam_sensor', name: 'Camshaft position sensor', system: 'Engine', slot: 'camSensor', im: 0, mo: 0 });
+  add({ key: 'crank_sensor', name: 'Crankshaft position sensor', system: 'Engine', slot: 'crankSensor', im: 0, mo: 0 });
 
   // ---------- Lubrication ----------
   add({ key: 'oil', name: 'Engine oil & filter', system: 'Lubrication', slot: 'oil', im: 5000, mo: 6 });
-  add({ key: 'oil_pan_gasket', name: 'Oil pan gasket', system: 'Lubrication', slot: 'oil', im: 0, mo: 0 });
+  add({ key: 'oil_pan_gasket', name: 'Oil pan gasket', system: 'Lubrication', slot: 'oilPanGasket', im: 0, mo: 0 });
 
   // ---------- Cooling ----------
   add({ key: 'coolant', name: 'Coolant', system: 'Cooling', slot: 'radiator', im: 50000, mo: 60 });
@@ -104,7 +104,7 @@ export function buildPartList(o) {
     add({ key: 'trans_fluid', name: 'Automatic transmission fluid & filter', system: 'Drivetrain', slot: 'transmission', im: 30000, mo: 36 });
   }
   add({ key: 'transmission', name: fwdLike ? 'Transaxle' : 'Transmission', system: 'Drivetrain', slot: 'transmission', im: 0, mo: 0 });
-  if (rwdLike || o.drivetrain === 'awd') add({ key: 'trans_mount', name: 'Transmission mount', system: 'Drivetrain', slot: 'mounts', im: 0, mo: 0 });
+  if (rwdLike || o.drivetrain === 'awd') add({ key: 'trans_mount', name: 'Transmission mount', system: 'Drivetrain', slot: 'transMount', im: 0, mo: 0 });
   if (rwdLike || o.drivetrain === 'awd') {
     add({ key: 'driveshaft', name: 'Driveshaft & U-joints', system: 'Drivetrain', slot: 'driveshaft', im: 30000, mo: 24, note: 'Interval is an inspection. Grease U-joints if they have zerks.' });
     add({ key: 'rear_diff_fluid', name: 'Rear differential fluid', system: 'Drivetrain', slot: 'differential', im: 60000, mo: 60 });
@@ -201,8 +201,8 @@ export function buildPartList(o) {
   for (const b of banks) {
     const n = banks.length > 1 ? ` ${b}` : '';
     const s = b === 'bank 2' ? '2' : '1';
-    add({ key: `o2_up_${s}`, name: `Upstream O2 sensor${n}`, system: 'Exhaust & emissions', slot: `o2_${s}`, im: 100000, mo: 0 });
-    add({ key: `o2_down_${s}`, name: `Downstream O2 sensor${n}`, system: 'Exhaust & emissions', slot: `o2_${s}`, im: 100000, mo: 0 });
+    add({ key: `o2_up_${s}`, name: `Upstream O2 sensor${n}`, system: 'Exhaust & emissions', slot: `o2up_${s}`, im: 100000, mo: 0 });
+    add({ key: `o2_down_${s}`, name: `Downstream O2 sensor${n}`, system: 'Exhaust & emissions', slot: `o2down_${s}`, im: 100000, mo: 0 });
     add({ key: `cat_${s}`, name: `Catalytic converter${n}`, system: 'Exhaust & emissions', slot: `cat_${s}`, im: 0, mo: 0 });
   }
   add({ key: 'exhaust', name: 'Exhaust pipes, hangers & gaskets', system: 'Exhaust & emissions', slot: 'exhaust', im: 0, mo: 0 });
@@ -228,6 +228,7 @@ export const BASE_OPTIONS = {
   bodyType: 'coupe', drivetrain: 'rwd', trans: 'manual', cylinders: 6, layout: 'V', engineMount: 'longitudinal',
   timing: 'chain', plugWires: true, frontSuspension: 'strut', rearSuspension: 'solid', rearBrakes: 'disc',
   steering: 'rack', cabinFilter: true, spare: true, egr: true, dualExhaust: false, clutchHydraulic: true,
+  bank1Side: 'L', cylOrder: 'alternate',
 };
 
 export const PRESETS = [
@@ -239,6 +240,8 @@ export const PRESETS = [
       ...BASE_OPTIONS, bodyType: 'coupe', drivetrain: 'rwd', trans: 'manual', cylinders: 6, layout: 'V', engineMount: 'longitudinal',
       timing: 'chain', plugWires: true, frontSuspension: 'strut', rearSuspension: 'solid', rearBrakes: 'drum', cabinFilter: false,
       spare: true, egr: true, dualExhaust: true, clutchHydraulic: false,
+      // Ford 3.8: cylinders 1-2-3 on the right (passenger) bank, front to rear; 4-5-6 on the left.
+      bank1Side: 'R', cylOrder: 'bank',
     },
     // Known weak spots for this platform: seeded as notes, not flags.
     partNotes: {
@@ -309,6 +312,8 @@ export const OPTION_FIELDS = [
   ['egr', 'EGR valve', [true, false]],
   ['dualExhaust', 'Dual exhaust', [true, false]],
   ['clutchHydraulic', 'Hydraulic clutch', [true, false]],
+  ['bank1Side', 'Bank 1 / cylinder 1 side', ['R', 'L']],
+  ['cylOrder', 'Cylinder numbering', ['bank', 'alternate']],
 ];
 
 export { CORNERS, SIDE, CORNER_NAME, cap };

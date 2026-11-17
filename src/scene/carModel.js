@@ -1,8 +1,11 @@
 import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 
 // Builds an original, stylized vehicle from primitives. Every maintainable
 // item lives in its own "slot" group so it can be colored, picked and
-// exploded independently. Coordinates: +x forward, +y up, +z left.
+// exploded independently. Build coordinates: +x forward, +y up, +z left.
+// three.js is right-handed, so +z is really the car's right; the root is
+// mirrored in z at the end so "left" parts show on the driver side.
 //
 // The body shape is parametric per body type so the same builder serves a
 // coupe, sedan, hatch, SUV or pickup.
@@ -95,6 +98,9 @@ export function buildVehicle(opts, bodyColor = '#b0181f') {
   const d = dimsFor(opts.bodyType);
   const root = new THREE.Group();
   const slots = new Map();
+  // Small text tags shown in the part location view (cylinder numbers, O2 positions).
+  const labels = [];
+  const tag = (slotName, text, pos) => labels.push({ slot: slotName, text, pos: new THREE.Vector3(...pos) });
   const fa = d.wb / 2, ra = -d.wb / 2, ay = d.ride + d.r - 0.02; // axle height
   const halfT = d.tw / 2;
   const trans = opts.engineMount === 'transverse';
@@ -207,28 +213,67 @@ export function buildVehicle(opts, bodyColor = '#b0181f') {
   const eL = 0.25 + opts.cylinders * 0.055, eW = opts.layout === 'V' ? 0.6 : 0.36;
   const engRot = trans ? [0, Math.PI / 2, 0] : [0, 0, 0];
   const E = (lx, ly, lz) => (trans ? [ex + lz * -1, ly, lx] : [ex + lx, ly, lz]); // local→world
+  const rot2 = (g, r) => rotGeo(rotGeo(g, r), engRot); // local rotation, then engine orientation
   put('engine', 'Engine', rotGeo(box(eL, 0.32, eW * 0.55), engRot), E(0, ey - 0.02, 0));
-  if (opts.layout === 'V') {
-    put('engine', 'Engine', rotGeo(box(eL, 0.15, 0.26), [engRot[0] + 0.6, engRot[1], 0]), E(0, ey + 0.14, 0.2));
-    put('engine', 'Engine', rotGeo(box(eL, 0.15, 0.26), [engRot[0] - 0.6, engRot[1], 0]), E(0, ey + 0.14, -0.2));
-  } else {
-    put('engine', 'Engine', rotGeo(box(eL, 0.16, 0.28), engRot), E(0, ey + 0.22, 0));
+  // Banks: side +1 = left (+z), -1 = right. Bank 1 holds cylinder 1.
+  const b1 = opts.bank1Side === 'R' ? -1 : 1;
+  const bankSides = opts.layout === 'V' ? [b1, -b1] : [0];
+  const sideName = (sg) => (sg > 0 ? 'L' : 'R');
+  for (const sg of bankSides) {
+    if (sg) {
+      // Cylinder head, tilted out; gasket under it, valve cover on top.
+      const ang = sg * 0.6, up = [0, Math.cos(ang), sg * Math.sin(ang)];
+      const hc = [0, ey + 0.14, sg * 0.2];
+      const at = (k) => E(hc[0], hc[1] + up[1] * k, hc[2] + up[2] * k);
+      put('engine', 'Engine', rot2(box(eL, 0.15, 0.26), [ang, 0, 0]), at(0));
+      put(`headGasket_${sideName(sg)}`, `Head gasket ${sideName(sg) === 'L' ? 'left' : 'right'}`, rot2(box(eL * 1.01, 0.014, 0.28), [ang, 0, 0]), at(-0.082));
+      const vc = `valveCover_${sideName(sg)}`;
+      put(vc, `Valve cover ${sideName(sg) === 'L' ? 'left' : 'right'}`, rot2(new RoundedBoxGeometry(eL * 0.94, 0.07, 0.22, 2, 0.025), [ang, 0, 0]), at(0.11));
+      put(vc, `Valve cover ${sideName(sg) === 'L' ? 'left' : 'right'}`, rot2(box(eL * 0.96, 0.012, 0.24), [ang, 0, 0]), at(0.08)); // gasket rail
+      tag(vc, sideName(sg) === 'L' ? 'Left' : 'Right', at(0.2));
+    } else {
+      put('engine', 'Engine', rotGeo(box(eL, 0.16, 0.28), engRot), E(0, ey + 0.22, 0));
+      put('headGasket', 'Head gasket', rotGeo(box(eL * 1.01, 0.014, 0.3), engRot), E(0, ey + 0.142, 0));
+      put('valveCover', 'Valve cover', rotGeo(new RoundedBoxGeometry(eL * 0.94, 0.07, 0.24, 2, 0.025), engRot), E(0, ey + 0.34, 0));
+      put('valveCover', 'Valve cover', rotGeo(box(eL * 0.96, 0.012, 0.26), engRot), E(0, ey + 0.305, 0));
+    }
   }
   put('intake', 'Intake manifold', rotGeo(box(eL * 0.85, 0.1, 0.24), engRot), E(0, ey + 0.27, 0));
+  // Intake gaskets: thin plates under the manifold, wider so the edge shows.
+  put('intakeGasket', 'Intake manifold gaskets', rotGeo(box(eL * 0.88, 0.012, opts.layout === 'V' ? 0.3 : 0.27), engRot), E(0, ey + 0.214, 0));
   put('oil', 'Oil pan & filter', rotGeo(box(eL * 0.9, 0.12, eW * 0.5), engRot), E(0, ey - 0.25, 0));
   put('oil', 'Oil pan & filter', cyl(0.045, 0.045, 0.12), E(0.05, ey - 0.12, eW * 0.4), trans ? [0, 0, 0] : [0, 0, 0]);
+  put('oilPanGasket', 'Oil pan gasket', rotGeo(box(eL * 0.93, 0.012, eW * 0.53), engRot), E(0, ey - 0.186, 0));
+  // Crank seals and timing cover. Crank centerline sits low in the block.
+  const crankY = ey - 0.12;
+  put('rearMain', 'Rear main seal', rot2(new THREE.TorusGeometry(0.065, 0.014, 10, 28), [0, Math.PI / 2, 0]), E(-eL / 2 - 0.008, crankY, 0));
+  put('rearMain', 'Rear main seal', rot2(cyl(0.05, 0.05, 0.01, 24), [0, 0, Math.PI / 2]), E(-eL / 2 - 0.008, crankY, 0));
+  put('frontCover', 'Timing cover', rotGeo(new RoundedBoxGeometry(0.035, 0.3, eW * 0.5, 2, 0.012), engRot), E(eL / 2 + 0.018, ey - 0.03, 0));
+  put('frontCover', 'Timing cover', rot2(new THREE.TorusGeometry(0.045, 0.012, 10, 24), [0, Math.PI / 2, 0]), E(eL / 2 + 0.04, crankY, 0)); // front crank seal
+  // Sensors: cam sensor at the top front of the timing cover, crank sensor low beside the crank.
+  put('camSensor', 'Camshaft position sensor', cyl(0.022, 0.022, 0.09, 14), E(eL / 2 + 0.03, ey + 0.13, 0.07));
+  put('crankSensor', 'Crankshaft position sensor', rot2(cyl(0.016, 0.016, 0.06, 12), [0, 0, Math.PI / 2]), E(eL / 2 + 0.05, crankY - 0.07, -0.08));
   put('throttle', 'Throttle body', rotGeo(cyl(0.06, 0.06, 0.08), [0, 0, Math.PI / 2]), E(eL / 2 + 0.06, ey + 0.27, 0));
   put('fuelRail', 'Fuel rail & injectors', rotGeo(cyl(0.012, 0.012, eL * 0.8), [0, 0, Math.PI / 2]), E(0, ey + 0.23, 0.12));
   if (opts.layout === 'V') put('fuelRail', 'Fuel rail & injectors', rotGeo(cyl(0.012, 0.012, eL * 0.8), [0, 0, Math.PI / 2]), E(0, ey + 0.23, -0.12));
-  // Plugs along heads, coil pack on top front
+  // Plugs along the heads, one per cylinder, numbered.
+  // cylOrder 'bank': bank 1 is 1..n front to rear, bank 2 continues (Ford).
+  // 'alternate': odd numbers on bank 1, even on bank 2 (GM and others).
   const nPerBank = opts.layout === 'V' ? Math.ceil(opts.cylinders / 2) : opts.cylinders;
+  const cylNo = (bank, i) => (opts.layout !== 'V' ? i + 1 : opts.cylOrder === 'alternate' ? i * 2 + bank + 1 : bank * nPerBank + i + 1);
   for (let i = 0; i < nPerBank; i++) {
-    const lx = -eL / 2 + (eL / nPerBank) * (i + 0.5);
+    const lx = eL / 2 - (eL / nPerBank) * (i + 0.5); // front to rear
     if (opts.layout === 'V') {
-      put('plugs', 'Spark plugs', cyl(0.012, 0.012, 0.09), E(lx, ey + 0.13, 0.36), trans ? [0, 0, 0.9] : [0.9, 0, 0]);
-      put('plugs', 'Spark plugs', cyl(0.012, 0.012, 0.09), E(lx, ey + 0.13, -0.36), trans ? [0, 0, -0.9] : [-0.9, 0, 0]);
+      bankSides.forEach((sg, bank) => {
+        if (bank * nPerBank + i >= opts.cylinders) return;
+        const m = put('plugs', 'Spark plugs', cyl(0.012, 0.012, 0.09), E(lx, ey + 0.13, sg * 0.36), trans ? [0, 0, sg * 0.9] : [sg * 0.9, 0, 0]);
+        m.userData.cyl = cylNo(bank, i);
+        tag('plugs', String(cylNo(bank, i)), E(lx, ey + 0.2, sg * 0.44));
+      });
     } else {
-      put('plugs', 'Spark plugs', cyl(0.012, 0.012, 0.09), E(lx, ey + 0.33, 0.06));
+      const m = put('plugs', 'Spark plugs', cyl(0.012, 0.012, 0.09), E(lx, ey + 0.38, 0.06));
+      m.userData.cyl = i + 1;
+      tag('plugs', String(i + 1), E(lx, ey + 0.46, 0.06));
     }
   }
   if (opts.plugWires) put('coils', 'Coil pack', rotGeo(box(0.12, 0.08, 0.16), engRot), E(eL / 2 - 0.05, ey + 0.36, 0.12));
@@ -245,8 +290,8 @@ export function buildVehicle(opts, bodyColor = '#b0181f') {
   put('alternator', 'Alternator', rotGeo(cyl(0.07, 0.07, 0.13), [0, 0, Math.PI / 2]), E(front - 0.02, ey + 0.16, -0.22));
   put('psReservoir', 'Power steering', rotGeo(cyl(0.055, 0.055, 0.08), [0, 0, Math.PI / 2]), E(front - 0.02, ey + 0.12, 0.25));
   put('starter', 'Starter', rotGeo(cyl(0.05, 0.05, 0.18), [0, 0, Math.PI / 2]), E(-eL / 2 - 0.02, ey - 0.15, -0.2));
-  put('mounts', 'Engine & trans mounts', box(0.08, 0.06, 0.08), E(0, ey - 0.2, 0.3));
-  put('mounts', 'Engine & trans mounts', box(0.08, 0.06, 0.08), E(0, ey - 0.2, -0.3));
+  put('mount_L', 'Engine mount left', new RoundedBoxGeometry(0.09, 0.07, 0.09, 2, 0.015), E(0, ey - 0.2, 0.3));
+  put('mount_R', 'Engine mount right', new RoundedBoxGeometry(0.09, 0.07, 0.09, 2, 0.015), E(0, ey - 0.2, -0.3));
 
   // Radiator & hoses (always across the nose)
   const radX = d.L / 2 - 0.32;
@@ -274,9 +319,11 @@ export function buildVehicle(opts, bodyColor = '#b0181f') {
     // Transaxle beside the engine
     put('clutch', 'Clutch / converter', rotGeo(cyl(0.16, 0.16, 0.1), [Math.PI / 2, 0, 0]), [ex, ey - 0.05, eL / 2 + 0.08]);
     put('transmission', 'Transaxle', box(0.36, 0.3, 0.3), [ex - 0.08, ey - 0.08, eL / 2 + 0.27]);
+    put('transMount', 'Transmission mount', new RoundedBoxGeometry(0.09, 0.07, 0.09, 2, 0.015), [ex - 0.08, ey + 0.1, eL / 2 + 0.3]);
   } else {
     put('clutch', opts.trans === 'manual' ? 'Clutch & bellhousing' : 'Torque converter', rotGeo(cyl(0.17, 0.2, 0.18), RZ), [bellX, ey - 0.04, 0]);
     put('transmission', 'Transmission', rotGeo(cyl(0.09, 0.15, 0.62), RZ), [bellX - 0.4, ey - 0.08, 0]);
+    put('transMount', 'Transmission mount', new RoundedBoxGeometry(0.1, 0.06, 0.16, 2, 0.015), [bellX - 0.62, ey - 0.2, 0]);
   }
   const tailX = trans ? ex - 0.2 : bellX - 0.72;
   const diffY = ay + 0.02;
@@ -324,14 +371,20 @@ export function buildVehicle(opts, bodyColor = '#b0181f') {
   const banksN = opts.layout === 'V' ? 2 : 1;
   const muffX = -d.L / 2 + 0.55;
   for (let b = 0; b < banksN; b++) {
-    const s = banksN === 2 ? (b === 0 ? 1 : -1) : -1;
+    const s = banksN === 2 ? (b === 0 ? b1 : -b1) : -1;
     const z = s * (banksN === 2 ? 0.22 : 0.15);
     const catX = ex - 0.5 - (trans ? 0 : eL / 2);
     const start = trans ? [ex + 0.2, ey - 0.05, z] : [ex, ey - 0.02, s * (eW / 2 + 0.05)];
     put('exhaust', 'Exhaust', tube([start, [catX + 0.3, d.ride + 0.12, z], [catX - 0.25, d.ride + 0.08, z], [muffX + 0.5, d.ride + 0.1, (opts.dualExhaust || banksN === 1) ? z : 0]], 0.03));
     put(`cat_${b + 1}`, `Catalytic converter bank ${b + 1}`, rotGeo(cyl(0.07, 0.07, 0.3), RZ), [catX, d.ride + 0.09, z]);
-    put(`o2_${b + 1}`, `O2 sensors bank ${b + 1}`, cyl(0.015, 0.015, 0.08), [catX + 0.28, d.ride + 0.17, z]);
-    put(`o2_${b + 1}`, `O2 sensors bank ${b + 1}`, cyl(0.015, 0.015, 0.08), [catX - 0.26, d.ride + 0.13, z]);
+    // Upstream (sensor 1) before the cat, downstream (sensor 2) after it.
+    const o2 = (k, label, x, y) => {
+      put(k, label, cyl(0.016, 0.016, 0.08, 12), [x, y, z]);
+      put(k, label, new THREE.SphereGeometry(0.022, 12, 8), [x, y + 0.045, z]); // connector
+      tag(k, `B${b + 1}S${k.startsWith('o2up') ? 1 : 2}`, [x, y + 0.17, z]);
+    };
+    o2(`o2up_${b + 1}`, `Upstream O2 sensor bank ${b + 1}`, catX + 0.28, d.ride + 0.17);
+    o2(`o2down_${b + 1}`, `Downstream O2 sensor bank ${b + 1}`, catX - 0.26, d.ride + 0.13);
   }
   const mufflers = opts.dualExhaust ? [0.35, -0.35] : [-0.3];
   for (const z of mufflers) {
@@ -344,7 +397,8 @@ export function buildVehicle(opts, bodyColor = '#b0181f') {
     const bb = new THREE.Box3().setFromObject(g);
     g.userData.center = bb.getCenter(new THREE.Vector3());
   }
-  return { root, slots, body, dims: d };
+  root.scale.z = -1; // see the note at the top: build +z (left) → world -z (left)
+  return { root, slots, body, dims: d, labels };
 }
 
 function rotGeo(g, [x, y, z]) {

@@ -1,5 +1,5 @@
 import { db, todayISO, getSetting, setSetting } from './db.js';
-import { buildPartList, PRESETS } from './templates.js';
+import { buildPartList, PRESETS, BASE_OPTIONS } from './templates.js';
 import { partHealth, worstLevel } from './health.js';
 import { buildInspection, buildTests, summarizeRun } from './inspection.js';
 import { buildCatalog, mergeCatalog } from './catalog.js';
@@ -8,6 +8,8 @@ import { withSchedule } from './schedule.js';
 
 // Virtual slots light several meshes at once.
 export const VIRTUAL_SLOTS = { tires: ['tire_FL', 'tire_FR', 'tire_RL', 'tire_RR'] };
+// Model spots that were split into separate shapes.
+const RENAMED_SLOTS = { mounts: 'mount_L', o2_1: 'o2up_1', o2_2: 'o2up_2' };
 
 export async function createVehicle({ presetId, name, vehicle = {}, options, odometer, odometerDate }) {
   const preset = PRESETS.find((p) => p.id === presetId) || PRESETS[1];
@@ -76,11 +78,18 @@ export async function loadVehicleState(vehicleId) {
   ]);
   // Apply the maintenance schedule. A stored interval that differs from the
   // template default was edited by the user, so it counts as custom.
-  const defaults = new Map(buildPartList(vehicle.options || {}).map((d) => [d.key, d]));
+  // Options added by newer versions (e.g. which bank holds cylinder 1) come
+  // from the vehicle's preset until the user sets them.
+  const preset = PRESETS.find((x) => x.id === vehicle.presetId);
+  vehicle.options = { ...BASE_OPTIONS, ...(preset?.options || {}), ...(vehicle.options || {}) };
+  const defaults = new Map(buildPartList(vehicle.options).map((d) => [d.key, d]));
   const visible = parts.filter((p) => !p.hidden).map((p) => {
     const d = defaults.get(p.key);
     const custom = p.customInterval ?? (p.custom || (d && ((p.im || 0) !== (d.im || 0) || (p.mo || 0) !== (d.mo || 0))));
-    return withSchedule(vehicle, { ...p, customInterval: !!custom });
+    // Built-in parts always take the current model spot (parts gained their own
+    // shapes over time); custom parts keep theirs, with renamed spots mapped.
+    const place = d && !p.custom ? { slot: d.slot, also: d.also } : { slot: RENAMED_SLOTS[p.slot] || p.slot };
+    return withSchedule(vehicle, { ...p, ...place, customInterval: !!custom });
   });
   const component = new Map();
   for (const c of components) if (!c.removedDate && c.partId != null) component.set(c.partId, c);
