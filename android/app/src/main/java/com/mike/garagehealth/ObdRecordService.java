@@ -25,6 +25,16 @@ public class ObdRecordService extends Service {
 
     private PowerManager.WakeLock wake;
 
+    /** True while the service is in the foreground, so the native poll loop can refresh its text. */
+    static volatile boolean running;
+
+    /** Replace the notification text without going through the WebView (works with the app in the background). */
+    static void update(Context ctx, String text) {
+        if (!running) return;
+        NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nm != null) nm.notify(NOTE_ID, build(ctx, text));
+    }
+
     @Override
     public void onCreate() {
         super.onCreate();
@@ -45,27 +55,29 @@ public class ObdRecordService extends Service {
         if (intent != null && ACTION_STOP.equals(intent.getAction())) {
             // Stop button: tell the web app, which ends the recording and stops this service.
             if (ObdSerialPlugin.current != null) ObdSerialPlugin.current.notifyStop();
+            running = false;
             stopForeground(true);
             stopSelf();
             return START_NOT_STICKY;
         }
         String text = intent != null && intent.hasExtra(EXTRA_TEXT) ? intent.getStringExtra(EXTRA_TEXT) : "Recording OBD session";
-        Notification n = build(text);
+        Notification n = build(this, text);
         if (Build.VERSION.SDK_INT >= 29) {
             startForeground(NOTE_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE);
         } else {
             startForeground(NOTE_ID, n);
         }
+        running = true;
         return START_NOT_STICKY;
     }
 
-    private Notification build(String text) {
+    private static Notification build(Context ctx, String text) {
         int flags = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0);
-        Intent open = getPackageManager().getLaunchIntentForPackage(getPackageName());
-        PendingIntent tap = PendingIntent.getActivity(this, 0, open, flags);
-        PendingIntent stop = PendingIntent.getService(this, 1,
-            new Intent(this, ObdRecordService.class).setAction(ACTION_STOP), flags);
-        return new NotificationCompat.Builder(this, CHANNEL)
+        Intent open = ctx.getPackageManager().getLaunchIntentForPackage(ctx.getPackageName());
+        PendingIntent tap = PendingIntent.getActivity(ctx, 0, open, flags);
+        PendingIntent stop = PendingIntent.getService(ctx, 1,
+            new Intent(ctx, ObdRecordService.class).setAction(ACTION_STOP), flags);
+        return new NotificationCompat.Builder(ctx, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_menu_directions)
             .setContentTitle("Garage Health: recording OBD")
             .setContentText(text)
@@ -78,6 +90,7 @@ public class ObdRecordService extends Service {
 
     @Override
     public void onDestroy() {
+        running = false;
         if (wake != null && wake.isHeld()) wake.release();
         wake = null;
         super.onDestroy();

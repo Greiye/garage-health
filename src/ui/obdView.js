@@ -1,6 +1,6 @@
 import { db, getSetting, setSetting } from '../data/db.js';
 import { addFlag } from '../data/repo.js';
-import { BluetoothTransport, normalizeMac, setKeepAwake, WebSerialTransport, WebBleTransport, DemoTransport, Elm327, Poller, RecordingService } from '../obd/elm327.js';
+import { BluetoothTransport, normalizeMac, setKeepAwake, WebSerialTransport, WebBleTransport, DemoTransport, Elm327, Poller, NativePoller, RecordingService } from '../obd/elm327.js';
 import { applyKeepScreenOn } from './display.js';
 import { CHANNELS, PIDS, evaluate } from '../obd/pids.js';
 import { describeDtc, partsForDtc, dtcSeverity } from '../obd/dtc.js';
@@ -38,6 +38,7 @@ export async function renderObd(app, el) {
   const native = BluetoothTransport.available();
   const serial = !native && WebSerialTransport.available();
   const saved = native ? await savedAdapter(app.st.vehicle.id) : null;
+  const nativePoll = native ? await getSetting('obdNativePoll', true) : false;
   live.cfg = await dashConfig(app.st.vehicle.id);
   live.R = rangesFor(app.st.vehicle);
   const sessions = await db.obdSessions.where({ vehicleId: app.st.vehicle.id }).reverse().sortBy('date');
@@ -68,6 +69,7 @@ export async function renderObd(app, el) {
       <button class="btn small" data-act="fullscreen">⛶ Full screen</button>
       <button class="btn small" data-act="gauges">Choose gauges (${live.cfg.gauges.length})</button>
       <label>Update <select data-rate>${RATES.map(([ms, l]) => `<option value="${ms}" ${ms === live.cfg.rateMs ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      ${native ? `<label class="tgl" title="Polls the adapter from Android itself, so recording keeps full speed with Spotify or Maps in front. Turn off to use the old in-app loop. Takes effect on the next connect."><input type="checkbox" data-nativepoll ${nativePoll ? 'checked' : ''}> Background-safe polling</label>` : ''}
       <span class="muted" data-hz>${live.poller?.hz ? live.poller.hz.toFixed(1) + ' updates/s' : ''}</span>
     </div>
     <div class="gauges">${live.cfg.gauges.map((ch) => gauge(ch)).join('')}</div>
@@ -104,6 +106,8 @@ export async function renderObd(app, el) {
   const lg = el.querySelector('.adapter-log');
   lg.ontoggle = () => { live.logOpen = lg.open; };
   el.querySelector('[data-rate]').onchange = (e) => saveDashConfig(app.st.vehicle.id, { ...live.cfg, rateMs: +e.target.value });
+  const np = el.querySelector('[data-nativepoll]');
+  if (np) np.onchange = async () => { await setSetting('obdNativePoll', np.checked); if (live.status === 'connected') toast('Takes effect on the next connect'); };
   const auto = el.querySelector('[data-auto]');
   if (auto) auto.onchange = () => saveAdapter(app.st.vehicle.id, { ...saved, auto: auto.checked });
   // Native auto-connect: once per app launch per vehicle, like OBD Fusion.
@@ -276,7 +280,11 @@ async function connect(app, el, transport, address, name) {
     live.info = await live.elm.init();
     live.status = 'connected';
     live.alerts = new Map();
-    live.poller = new Poller(live.elm, pidsFor(live.cfg || await dashConfig(app.st.vehicle.id)), (s) => onSample(app, s), { rateMs: live.cfg?.rateMs || 0 });
+    const useNative = NativePoller.available(transport) && await getSetting('obdNativePoll', true);
+    const P = useNative ? NativePoller : Poller;
+    live.poller = new P(live.elm, pidsFor(live.cfg || await dashConfig(app.st.vehicle.id)), (s, o) => onSample(app, s, o), { rateMs: live.cfg?.rateMs || 0 });
+    // Adapter dropped (ignition off, out of range): end the connection and keep what was recorded.
+    transport.onDrop = () => { if (live.transport === transport) disconnect(app, lastEl || el, 'Adapter disconnected'); };
     live.poller.start();
     // Read codes once on connect
     const { stored, pending } = await live.elm.readDtcs().catch(() => ({ stored: [], pending: [] }));
@@ -290,15 +298,18 @@ async function connect(app, el, transport, address, name) {
   }
 }
 
-async function disconnect(app, el) {
-  live.poller?.stop();
+async function disconnect(app, el, reason) {
+  if (live.status !== 'connected' && live.status !== 'connecting') return;
+  live.status = 'disconnecting';
+  try { await live.poller?.stop(); } catch {}
   try { await live.transport?.disconnect(); } catch {}
   live.status = 'disconnected';
   live.elm = live.poller = live.transport = live.info = null;
   if (live.recording?.rows.length) {
     stopRecordingNotice();
     await saveSession(app, { name: `Live session ${new Date().toLocaleString()}`, source: 'live', rows: live.recording.rows });
-  }
+    if (reason) toast(`${reason}. Session saved`);
+  } else if (reason) toast(reason);
   stopRecordingNotice();
   live.recording = null;
   renderObd(app, el);
@@ -307,6 +318,8 @@ async function disconnect(app, el) {
 // Ends the recording, from the Stop button or the notification.
 let lastApp = null, lastEl = null, stopHooked = false, recTimer = null;
 async function finishRecording(app, el) {
+  if (!live.recording) return;
+  await live.poller?.flush?.(); // pull rows the native loop recorded while the app was in the background
   const r = live.recording;
   if (!r) return;
   live.recording = null;
@@ -319,6 +332,7 @@ async function finishRecording(app, el) {
 function startRecordingNotice() {
   RecordingService.start('0:00 · 0 rows');
   clearInterval(recTimer);
+  if (live.poller?.native) return; // the native loop updates the notification itself, even with the app in the background
   recTimer = setInterval(() => {
     const r = live.recording;
     if (!r) return;
@@ -341,7 +355,8 @@ function updateDiag(app) {
   const body = document.querySelector('#panel .obd-view [data-diag-body]');
   if (body) body.innerHTML = diagnosisHTML(app, live.diag, { compact: true });
 }
-async function onSample(app, s) {
+// batch: true for all but the last sample of a native catch-up batch; those skip the screen and part flags.
+async function onSample(app, s, { batch = false } = {}) {
   // Reject impossible readings (keep the last good value); alerts below need a sustained condition.
   const t = s.t / 1000;
   const good = {};
@@ -354,7 +369,8 @@ async function onSample(app, s) {
   live.buf.push({ ...live.sample, t });
   while (live.buf.length > 4000 || (live.buf.length && live.buf.at(-1).t - live.buf[0].t > 900)) live.buf.shift();
   if (Date.now() - lastDiag > 15000) updateDiag(app);
-  if (live.recording) live.recording.rows.push({ ...s, t: (s.t - live.recording.t0) / 1000 });
+  if (live.recording && s.t >= live.recording.t0) live.recording.rows.push({ ...s, t: (s.t - live.recording.t0) / 1000 });
+  if (batch) return;
   const hits = sustain(live.sustainState, evaluate(live.sample), t);
   live.alertsByCh = {};
   for (const h of hits) {
