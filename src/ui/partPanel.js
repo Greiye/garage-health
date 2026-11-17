@@ -7,6 +7,7 @@ import { openServiceForm, componentFieldsHTML, readComponentFields } from './ser
 import { openRotation } from './rotation.js';
 import { vehicleCatalog } from '../data/repo.js';
 import { pnHTML } from './catalogView.js';
+import { mountLocation, locationSection } from './locationView.js';
 
 export const chip = (level, extra = '', label) => `<span class="chip lv-${level}">${esc(label || LEVELS[level].label)}${extra}</span>`;
 export const dot = (level, blink) => `<span class="dot lv-${level} ${blink ? 'blink' : ''}"></span>`;
@@ -55,6 +56,7 @@ export async function renderPart(app, el, partId) {
 
   ${h.reasons.length ? `<ul class="reasons">${h.reasons.map((r) => `<li>${dot(r.level)} ${esc(r.text)}</li>`).join('')}</ul>` : ''}
   ${p.notes ? `<p class="note">${esc(p.notes)}</p>` : ''}
+  ${locationSection()}
   ${catalogFor(st.vehicle, p)}
 
   <div class="actions">
@@ -113,6 +115,7 @@ export async function renderPart(app, el, partId) {
     ${pastComps.length ? `<h4>Previous ${tire ? 'tires' : 'parts'}</h4><ul class="list">${pastComps.map((c) => `<li class="row-item"><div class="grow"><div>${esc([c.brand, c.model].filter(Boolean).join(' ') || 'Unrecorded part')} ${c.partNumber ? `<span class="muted small">#${esc(c.partNumber)}</span>` : ''}</div><div class="muted small">${fmtDate(c.installDate)} → ${fmtDate(c.removedDate)}${c.installMiles != null && c.removedMiles != null ? ` · ${fmtMi(c.removedMiles - c.installMiles)} of use` : ''}</div></div></li>`).join('')}</ul>` : ''}
   </section>`;
 
+  try { mountLocation(app, el.querySelector('[data-loc-host]'), p); } catch (err) { console.error(err); el.querySelector('section.loc').hidden = true; }
   el.querySelector('[data-back]').onclick = () => app.showTab('health');
   el.onclick = async (e) => {
     const a = e.target.closest('[data-act]')?.dataset.act;

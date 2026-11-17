@@ -111,7 +111,8 @@ export function fitCustomModel(scene, d, bodyColor) {
   }
   outer.updateMatrixWorld(true);
 
-  const corner = (o) => { const c = centerOf(o); return `${c.x > 0 ? 'F' : 'R'}${c.z > 0 ? 'L' : 'R'}`; };
+  // Here +z is the car's right (three.js is right-handed, +x forward, +y up).
+  const corner = (o) => { const c = centerOf(o); return `${c.x > 0 ? 'F' : 'R'}${c.z > 0 ? 'R' : 'L'}`; };
   const tag = (list) => list.filter((o) => { let sk = false; o.traverse((m) => { if (m.isSkinnedMesh) sk = true; }); return !sk; }).map((obj) => ({ obj, corner: corner(obj) }));
   const wheelTags = tag(wheels);
   // A caliper counts only if it sits at a wheel; ones left at a rig's origin
