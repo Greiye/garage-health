@@ -23,7 +23,7 @@ export async function renderInspect(app, el) {
       <button class="btn" data-act="everything">Inspection + all tests</button>
     </div>
     <section><h3>Inspections</h3>${runs.length ? `<ul class="list">${runs.map((r) => runRow(r, items)).join('')}</ul>` : '<p class="muted small">None yet.</p>'}</section>
-    <section><h3>Test battery</h3>${groups.map((g) => `<details class="sys"><summary><span class="grow">${esc(g)}</span><span class="muted small">${tests.filter((t) => t.group === g).length}</span></summary><ul class="list">${tests.filter((t) => t.group === g).map((t) => `<li class="row-item" data-test="${t.id}"><div class="grow"><div>${esc(t.name)}</div><div class="muted small">${esc(t.criteria)}</div></div><span class="btn small">Run</span></li>`).join('')}</ul></details>`).join('')}</section>`;
+    <section><h3>Test battery</h3>${groups.map((g) => `<details class="sys"><summary><span class="grow">${esc(g)}</span><span class="muted small">${tests.filter((t) => t.group === g).length}</span></summary><ul class="list">${tests.filter((t) => t.group === g).map((t) => `<li class="row-item" data-test="${t.id}"><div class="grow"><div>${esc(t.name)}</div><div class="muted small">${t.spec ? `<span class="spec-tag ${t.spec.verified ? 'ok' : 'unv'}">${t.spec.verified ? 'Factory spec' : 'Spec not verified'}</span> ` : ''}${esc(t.criteria)}</div></div><span class="btn small">Run</span></li>`).join('')}</ul></details>`).join('')}</section>`;
 
   el.onclick = async (e) => {
     const r = e.target.closest('[data-run]');
@@ -109,6 +109,7 @@ function renderRun(app, el, run) {
     const st2 = tr.status || ev.status;
     return `<details class="sys test" data-test-run="${t.id}" ${app.openTests?.has(t.id) ? 'open' : ''}><summary><span class="dot lv-${st2 ? STATUS[st2].level : 'unknown'}"></span><span class="grow">${esc(t.name)}</span><span class="muted small">${esc(t.group)}</span></summary>
       <div class="test-body">
+        ${specHTML(t)}
         ${t.tools.length ? `<p class="small"><b>Tools:</b> ${t.tools.map(esc).join(', ')}</p>` : ''}
         <ol class="small steps">${t.steps.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>
         ${t.readings.map((r) => {
@@ -236,6 +237,13 @@ function renderRun(app, el, run) {
       await app.refresh();
     }
   };
+}
+
+// Where the test's numbers came from, when the vehicle catalog says.
+function specHTML(t) {
+  if (!t.spec) return '';
+  const v = t.spec.verified;
+  return `<p class="small spec-src ${v ? 'ok' : 'unv'}"><b>${v ? 'Factory spec' : 'Factory spec not verified'}</b>${t.spec.source ? ` · ${esc(t.spec.source)}` : ''}${t.spec.note ? `<br>${esc(t.spec.note)}` : ''}</p>`;
 }
 
 function evHTML(ev) {

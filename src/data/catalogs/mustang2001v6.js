@@ -8,6 +8,7 @@
 // pn: null        = no reliable number known; look it up by VIN.
 
 const OG = 'Owner guide 2001';
+const SM_TESTS = '1999-2004 Mustang service manual, Engine: Component Tests';
 const ok = (brand, pn) => ({ brand, pn, verified: true, source: OG });
 const chk = (brand, pn, note) => ({ brand, pn, verified: false, note });
 
@@ -23,6 +24,85 @@ export default {
     coolantRun: [188, 220],
     idleTiming: [8, 26],
     mafIdlePerL: [0.7, 1.4],
+  },
+  // Test specs. Only numbers found in the 1999-2004 Mustang service manual
+  // are set (spec.verified = true). Where no factory number was found the
+  // limit is left blank on purpose; enter it from your own manual.
+  testSpecs: {
+    t_vacuum: {
+      spec: { verified: true, source: SM_TESTS, note: 'Ford range for all engines: 15-22 inHg at idle, minus 1 inHg per 1,000 ft. 17-21 inHg is the usual healthy band for a stock 3.8 (general rule, not a factory number).' },
+      steps: [
+        'Warm engine to normal temperature. Tee the gauge into a manifold vacuum source (a port on the intake, not a ported/throttle source).',
+        'Enter your elevation so the limit is corrected.',
+        'Warm idle: record the reading and how far the needle swings.',
+        'Hold 2500 rpm for 30 s: vacuum should hold or rise. A slow drop means exhaust restriction.',
+        'Snap the throttle: should drop near 0 then overshoot.',
+      ],
+      readings: { idle: { nominal: null, limit: null }, hold: { nominal: null, limit: null } },
+      addReadings: [
+        { id: 'swing', label: 'Needle swing at idle', unit: 'inHg' },
+        { id: 'elev', label: 'Elevation', unit: 'ft', optional: true },
+      ],
+      criteria: 'Factory: 15-22 inHg at idle depending on engine condition and altitude; subtract 1 inHg per 1,000 ft. Healthy stock 3.8: about 17-21 inHg, steady. Needle swinging more than about 4 inHg at idle = worn valve guides; regular flick of about 4 inHg = sticking valve; drop toward 0 = worn rings.',
+      evaluate: (v) => {
+        const out = [];
+        const corr = v.elev != null && v.elev !== '' ? Math.max(0, +v.elev) / 1000 : 0;
+        const lo = 15 - corr, hi = 22 - corr, okLo = 17 - corr;
+        const f = (x) => x.toFixed(1).replace(/\.0$/, '');
+        const idle = v.idle === '' || v.idle == null ? null : +v.idle;
+        if (idle != null) {
+          if (idle < lo) out.push({ status: 'fail', text: `Idle ${idle} inHg is below the factory minimum ${f(lo)} inHg${corr ? ' (altitude corrected)' : ''}` });
+          else if (idle < okLo) out.push({ status: 'watch', text: `Idle ${idle} inHg is in range but below the healthy ${f(okLo)} inHg: check for leaks or late timing` });
+          else if (idle > hi) out.push({ status: 'watch', text: `Idle ${idle} inHg is above ${f(hi)} inHg: check the gauge and the vacuum source` });
+          else out.push({ status: 'pass', text: `Idle ${idle} inHg within ${f(okLo)}-${f(hi)} inHg` });
+        }
+        const hold = v.hold === '' || v.hold == null ? null : +v.hold;
+        if (hold != null && idle != null && hold < idle - 2) out.push({ status: 'watch', text: `2500 rpm reading ${hold} inHg fell below idle: possible exhaust restriction`, parts: ['exhaust'] });
+        const sw = v.swing === '' || v.swing == null ? null : +v.swing;
+        if (sw != null) out.push(sw > 4 ? { status: 'watch', text: `Needle swing ${sw} inHg (over 4): worn valve guides or sticking valve` } : { status: 'pass', text: `Needle steady (${sw} inHg swing)` });
+        return out;
+      },
+    },
+    t_compression: {
+      spec: { verified: true, source: SM_TESTS, note: 'The manual gives the 75% rule and a Compression Pressure Limit Chart (an image we could not read). No minimum psi for the 3.8 was found, so the absolute limit is blank. Record the highest reading after at least 5 strokes.' },
+      steps: [
+        'Warm the engine to normal temperature, then ignition OFF.',
+        'Disable fuel (inertia switch or fuel pump relay) and unplug the coil pack.',
+        'Remove all six spark plugs. Keep them in cylinder order.',
+        'Throttle plates wide open. Crank at least 5 compression strokes per cylinder and record the highest reading. Use about the same number of strokes on each.',
+        'For any low cylinder, add about one tablespoon of engine oil and retest (wet).',
+        'Cylinder numbers: 1-2-3 on the passenger side (right bank), 4-5-6 on the driver side (left bank), front to back.',
+      ],
+      readings: { dry: { nominal: null, limit: null } },
+      criteria: 'Factory: lowest cylinder at least 75% of the highest. App also flags a spread over about 10% to watch. Wet rise = rings; no rise = valves; two neighbors low = head gasket.',
+    },
+    t_leakdown: {
+      spec: { verified: true, source: SM_TESTS, note: 'Factory: leakage over 20% is excessive. The 10% "good" line is a general rule.' },
+      criteria: 'Factory: over 20% is excessive. Under 10% is good (general rule). Listen at the intake (intake valve), tailpipe (exhaust valve), oil fill (rings), radiator bubbles (head gasket).',
+      evaluate: (v) => {
+        const xs = (v.leak || []).map((x, i) => [i + 1, x]).filter(([, x]) => x != null && x !== '');
+        return xs.filter(([, x]) => +x > 10 && +x <= 20).map(([c, x]) => ({ status: 'watch', text: `Cyl ${c} ${x}% leakage: worn (10-20%)` }));
+      },
+    },
+    t_fuel_pressure: {
+      spec: { verified: false, note: 'No factory fuel pressure number for the 2001 3.8 was found (the spec page is an image). Limits are blank; enter the numbers from your manual or the label on the rail. The 3.8 section lists a fuel rail pressure sensor, so there may be no vacuum regulator to pinch.' },
+      steps: [
+        'Relieve pressure first, then connect the gauge to the Schrader test port on the fuel rail.',
+        'Key on, engine off (pump primes about 1-2 s; cycle the key 2-3 times): record.',
+        'Start and idle: record. Then snap the throttle and watch for a drop.',
+        'Shut off: record the pressure after 5 minutes.',
+      ],
+      criteria: 'Factory spec not verified. Compare with your manual. A fast bleed-down after shutoff points to a leaking injector or pump check valve.',
+    },
+    t_battery: {
+      spec: { verified: false, note: 'No factory battery test numbers were found. Limits are general industry rules: resting 12.6 V is full charge (fail under 12.2 V); under a 15 s load at half CCA at 70 °F it must stay above 9.6 V. Battery: BXT-59 (owner guide).' },
+    },
+    t_charging: {
+      spec: { verified: false, note: 'No factory regulated-voltage number was found. Limits are the general 13.2-14.8 V band; the app also reads battery voltage live on the OBD tab.' },
+    },
+    t_cranking: {
+      spec: { verified: false, note: 'General rule (9.6 V minimum while cranking); no factory number found.' },
+    },
   },
   items: {
     // ---- Fluids (all from the owner guide) ----

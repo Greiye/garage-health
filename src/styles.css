@@ -287,3 +287,7 @@ body.stage-hidden .show-model { display: block; position: fixed; right: max(12px
 .hold-name { font-size: .92rem; margin-bottom: 5px; }
 .hold-btns { display: flex; gap: 6px; flex-wrap: wrap; }
 .hold-btns .btn { white-space: nowrap; }
+/* Spec source on inspection tests */
+.spec-tag { font-size: .68rem; border: 1px solid currentColor; border-radius: 4px; padding: 0 .3rem; }
+.spec-tag.ok, .spec-src.ok b { color: var(--green); } .spec-tag.unv, .spec-src.unv b { color: var(--yellow); }
+.spec-src { border-left: 3px solid var(--grey); padding-left: .5rem; } .spec-src.ok { border-color: var(--green); } .spec-src.unv { border-color: var(--yellow); }
