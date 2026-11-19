@@ -38,6 +38,8 @@ export const GENERIC_RANGES = {
   catRatio: 0.6, // downstream activity / upstream activity above this → weak cat
   iatOverAmbient: 50,
   oilHot: 260,
+  climateLow: 20, // °F: gauge floor for temperatures (Las Vegas never gets colder)
+  climateHigh: 120, // °F: hottest ambient expected
 };
 
 // Effective ranges for a vehicle.
