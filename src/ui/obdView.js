@@ -129,30 +129,19 @@ function gauge(ch) {
   const sc = live.R ? scaleFor(ch, live.R) : null;
   const txt = v == null ? '—' : v.toFixed(d.dp);
   const bar = sc ? `<span class="gbar" style="background:${zoneGradient(sc)}"><i class="gneedle" style="left:${v == null ? 0 : needlePct(sc, v)}%" ${v == null ? 'hidden' : ''}><b class="gnv">${txt}</b></i><span class="gmin">${sc.min}</span><span class="gmax">${sc.max}</span></span>` : '';
+  // Glance bar: a fill behind the numbers (back layer) plus a thin zone strip; numbers sit on top.
+  const glance = sc ? `<span class="gfill" style="${fillStyle(sc, v)}"></span><span class="gzone" style="background:${zoneGradient(sc)}"></span>` : '';
   const range = sc ? `<span class="g-range">${fmtTick(sc.min)} – ${fmtTick(sc.max)}</span>` : '';
-  return `<div class="gauge ${gaugeClass(ch, v)}" data-g="${ch}">${dial(sc, v)}<span class="g-name">${esc(d.name)}</span>${range}<span class="g-ann"></span><span class="g-val">${txt}</span><span class="g-unit">${esc(d.unit)}</span>${bar}</div>`;
+  return `<div class="gauge ${gaugeClass(ch, v)}" data-g="${ch}">${glance}<span class="g-name">${esc(d.name)}</span>${range}<span class="g-val">${txt}</span><span class="g-unit">${esc(d.unit)}</span>${bar}</div>`;
 }
 
-// Round instrument dial: 270° sweep, colored zone ring, white ticks and needle.
-const SWEEP = 135;
-const dialAngle = (sc, v) => -SWEEP + (2 * SWEEP * needlePct(sc, v)) / 100;
-const pt = (deg, r) => [r * Math.sin((deg * Math.PI) / 180), -r * Math.cos((deg * Math.PI) / 180)].map((n) => n.toFixed(2)).join(' ');
 const fmtTick = (n) => (Math.abs(n) >= 1000 ? `${+(n / 1000).toFixed(1)}k` : `${+n.toFixed(2)}`);
-function dial(sc, v) {
-  let ring = '', ticks = '';
-  if (sc) {
-    ring = sc.zones.map(([a, b, c]) => {
-      const a0 = dialAngle(sc, a), a1 = dialAngle(sc, b);
-      if (a1 - a0 < 0.5) return '';
-      return `<path class="dz dz-${c}" d="M${pt(a0, 25)} A25 25 0 ${a1 - a0 > 180 ? 1 : 0} 1 ${pt(a1, 25)}"/>`;
-    }).join('');
-    for (let i = 0; i <= 20; i++) {
-      const deg = -SWEEP + (2 * SWEEP * i) / 20;
-      ticks += i % 5 ? `<path class="dt-m" d="M${pt(deg, 19.5)} L${pt(deg, 22.5)}"/>` : `<path class="dt" d="M${pt(deg, 16.5)} L${pt(deg, 22.5)}"/>`;
-    }
-  }
-  const ang = sc && v != null ? dialAngle(sc, v) : -SWEEP;
-  return `<svg class="gdial" viewBox="-31 -31 62 62" aria-hidden="true"><circle class="d-bezel" r="30"/><circle class="d-face" r="28"/>${ring}${ticks}<g class="dneedle" style="transform:rotate(${ang}deg)" ${sc && v != null ? '' : 'visibility="hidden"'}><path d="M-1.5 5 L-0.6 -23 L0.6 -23 L1.5 5 Z"/></g><circle class="d-hub" r="3.4"/></svg>`;
+// Fill grows from the scale's zero (centre for ± channels like fuel trims), else from the left edge.
+function fillStyle(sc, v) {
+  if (v == null) return 'left:0;width:0';
+  const base = sc.min < 0 && sc.max > 0 ? needlePct(sc, 0) : 0;
+  const p = needlePct(sc, v);
+  return `left:${Math.min(base, p)}%;width:${Math.abs(p - base)}%`;
 }
 
 // Alert from the rules wins; otherwise the zone the needle sits in colors the tile.
@@ -177,12 +166,8 @@ function updateGauges(el) {
       n.hidden = v == null;
       if (v != null) { n.style.left = `${needlePct(scaleFor(ch, live.R), v)}%`; n.firstChild.textContent = txt; }
     }
-    const dn = g.querySelector('.dneedle');
-    const sc = dn && live.R ? scaleFor(ch, live.R) : null;
-    if (dn) {
-      if (sc && v != null) { dn.removeAttribute('visibility'); dn.style.transform = `rotate(${dialAngle(sc, v)}deg)`; }
-      else dn.setAttribute('visibility', 'hidden');
-    }
+    const f = g.querySelector('.gfill');
+    if (f && live.R) f.style.cssText = fillStyle(scaleFor(ch, live.R), v);
     g.className = `gauge ${gaugeClass(ch, v)}`;
   }
   const rec = el?.querySelector('[data-act=record]');
@@ -543,7 +528,7 @@ async function openFullscreen(app) {
   fs.innerHTML = `
     <div class="fs-bar"><b>${esc(app.st.vehicle.name)}</b><span class="status st-${live.status}">${esc(live.status)}</span><span class="muted small" data-hz></span><span class="grow"></span>
       <select data-rate>${RATES.map(([ms, l]) => `<option value="${ms}" ${ms === live.cfg.rateMs ? 'selected' : ''}>${l}</option>`).join('')}</select>
-      <select data-style title="Layout">${[['cockpit', 'Cockpit'], ['compact', 'Compact'], ['bars', 'Bars'], ['large', 'Large']].map(([k, l]) => `<option value="${k}" ${k === fsStyle ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      <select data-style title="Layout">${[['cockpit', 'Glance bars'], ['compact', 'Compact'], ['bars', 'Bars'], ['large', 'Large']].map(([k, l]) => `<option value="${k}" ${k === fsStyle ? 'selected' : ''}>${l}</option>`).join('')}</select>
       <button class="btn small" data-exit>✕ Exit</button></div>
     <div class="fs-gauges">${live.cfg.gauges.map((ch) => gauge(ch)).join('')}</div>
     <ul class="fs-alerts"></ul>`;

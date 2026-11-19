@@ -1,10 +1,9 @@
 :root {
-  --bg: #0f1216; --bg2: #161b22; --card: #1b212b; --line: #2a3240; --text: #e6e9ef; --muted: #8b95a7;
-  --accent: #4f8cff; --green: #22c55e; --yellow: #eab308; --orange: #f97316; --red: #ef4444; --grey: #64748b;
-  --radius: 12px; color-scheme: dark;
-}
-@media (prefers-color-scheme: light) {
-  :root { --bg: #eef1f5; --bg2: #ffffff; --card: #ffffff; --line: #d8dee8; --text: #141922; --muted: #5d687a; color-scheme: light; }
+  /* Aviation instrument-panel theme: blue-grey bezels, white placards, amber annunciators, teal accents. Dark in both schemes. */
+  --bg: #0c1013; --bg2: #1b2329; --card: #212a31; --line: #36424c; --text: #eef2f4; --muted: #93a3ae;
+  --accent: #4fb8bd; --green: #3fcf6e; --yellow: #f2c94c; --orange: #ff7a1a; --red: #ff3b30; --grey: #64748b;
+  --av-amber: #f6b73c; --av-teal: #4fb8bd; --av-screw: radial-gradient(circle, #6b7680 1.1px, #262e35 1.6px, transparent 2.1px);
+  --radius: 6px; color-scheme: dark;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 15px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
@@ -26,7 +25,6 @@ h2 { font-size: 1.15rem; margin: 0; } h3 { font-size: .95rem; margin: 0 0 .5rem;
 /* Layout */
 .layout { flex: 1; display: grid; grid-template-columns: 1fr 440px; min-height: 0; }
 .stage { position: relative; min-height: 0; background: radial-gradient(ellipse at 50% 40%, #1d2531 0%, var(--bg) 70%); overflow: hidden; }
-@media (prefers-color-scheme: light) { .stage { background: radial-gradient(ellipse at 50% 40%, #ffffff 0%, var(--bg) 75%); } }
 .stage canvas { width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
 .panel { display: flex; flex-direction: column; min-height: 0; background: var(--bg2); border-left: 1px solid var(--line); overflow-y: auto; }
 .panel-body { padding: .8rem 1rem 2rem; }
@@ -158,49 +156,30 @@ legend { color: var(--muted); font-size: .82rem; padding: 0 .3rem; }
 .g-name { font-size: .68rem; color: var(--muted); } .g-val { font-size: 1.2rem; font-weight: 700; font-variant-numeric: tabular-nums; } .g-unit { font-size: .68rem; color: var(--muted); }
 .g-warn { border-color: var(--orange); } .g-warn .g-val { color: var(--orange); }
 .g-critical { border-color: var(--red); animation: blink .9s infinite; } .g-critical .g-val { color: var(--red); }
-/* Cockpit instruments: one PID per row, round dial + annunciator + readout window.
-   Live panel always; full screen when the Cockpit layout is picked. Dark in both themes. */
-.gdial, .g-range, .g-ann { display: none; }
-:is(.gauges, .fs-cockpit .fs-gauges) {
-  --ck-panel: #27313a; --ck-panel2: #1a2027; --ck-face: #06080a; --ck-white: #eef2f4; --ck-dim: #8a9aa6;
-  --ck-amber: #f6b73c; --ck-orange: #ff7a1a; --ck-red: #ff3b30; --ck-green: #3fcf6e; --ck-yellow: #f2c94c; --ck-teal: #5ec4c8;
-  background: #0f1418; padding: 6px; border-radius: 8px; border: 1px solid #000; box-shadow: inset 0 1px 6px rgba(0, 0, 0, .6);
-}
+/* Glance bars: one PID per row. Back layer = fill to the reading (zone color) + thin zone strip;
+   front layer = big high-contrast numbers you can read at a glance while driving.
+   Live panel always; full screen when "Glance bars" is picked. */
+.gfill, .gzone, .g-range { display: none; }
+:is(.gauges, .fs-cockpit .fs-gauges) { gap: 4px; }
 :is(.gauges, .fs-cockpit .fs-gauges) .gauge {
-  display: grid; grid-template-columns: 52px minmax(0, 1fr) auto 2.6rem; grid-template-rows: auto auto; column-gap: 10px; align-items: center;
-  padding: 4px 8px 4px 5px; border-radius: 5px; border: 1px solid #090c0f; color: var(--ck-white);
-  background:
-    radial-gradient(circle at calc(100% - 5px) 5px, #6b7680 1.2px, #2b333a 1.6px, transparent 2.2px),
-    radial-gradient(circle at calc(100% - 5px) calc(100% - 5px), #6b7680 1.2px, #2b333a 1.6px, transparent 2.2px),
-    linear-gradient(180deg, var(--ck-panel), var(--ck-panel2));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07), inset 0 -1px 0 rgba(0, 0, 0, .5); animation: none;
+  position: relative; overflow: hidden; isolation: isolate; display: grid; grid-template-columns: minmax(0, 1fr) auto 2.4rem; grid-template-rows: auto auto; column-gap: 8px; align-items: center;
+  min-height: 58px; padding: 4px 12px; border-radius: 4px; border: 1px solid #05080a; background: #0a0e11; color: #fff; animation: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05);
 }
-:is(.gauges, .fs-cockpit .fs-gauges) .gdial { display: block; grid-row: 1 / 3; grid-column: 1; width: 52px; height: 52px; }
-.gdial .d-bezel { fill: #3a444d; stroke: #12171b; stroke-width: 1; }
-.gdial .d-face { fill: var(--ck-face); }
-.gdial .dz { fill: none; stroke-width: 3.6; }
-.gdial .dz-green { stroke: var(--ck-green); } .gdial .dz-yellow { stroke: var(--ck-yellow); } .gdial .dz-orange { stroke: var(--ck-orange); } .gdial .dz-red { stroke: var(--ck-red); } .gdial .dz-n { stroke: var(--ck-teal); opacity: .75; }
-.gdial .dt { stroke: var(--ck-white); stroke-width: 1.5; } .gdial .dt-m { stroke: var(--ck-white); stroke-width: .7; opacity: .7; }
-.gdial .dneedle { transition: transform .25s linear; } .gdial .dneedle path { fill: var(--ck-white); }
-.gdial .d-hub { fill: #15191d; stroke: var(--ck-amber); stroke-width: 1.2; }
-:is(.gauges, .fs-cockpit .fs-gauges) .g-name { grid-row: 1; grid-column: 2; align-self: end; color: var(--ck-white); font-size: .76rem; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-stretch: condensed; }
-:is(.gauges, .fs-cockpit .fs-gauges) .g-range { display: block; grid-row: 2; grid-column: 2; align-self: start; color: var(--ck-dim); font-size: .66rem; font-variant-numeric: tabular-nums; letter-spacing: .04em; }
-:is(.gauges, .fs-cockpit .fs-gauges) .g-ann { display: block; grid-row: 2; grid-column: 2; justify-self: end; align-self: start; font-size: .58rem; font-weight: 800; letter-spacing: .08em; line-height: 1; padding: 2px 5px; border-radius: 2px; }
-.g-watch .g-ann::before { content: 'CHECK'; } .g-watch .g-ann { background: var(--ck-yellow); color: #111; }
-.g-warn .g-ann::before { content: 'CAUTION'; } .g-warn .g-ann { background: var(--ck-orange); color: #111; }
-.g-critical .g-ann::before { content: 'WARNING'; } .g-critical .g-ann { background: var(--ck-red); color: #fff; animation: blink .9s infinite; }
-:is(.gauges, .fs-cockpit .fs-gauges) .g-val {
-  grid-row: 1 / 3; grid-column: 3; min-width: 4.8ch; text-align: right; padding: 2px 7px; border-radius: 3px;
-  background: #050607; border: 1px solid #000; box-shadow: inset 0 1px 4px #000, 0 1px 0 rgba(255, 255, 255, .06);
-  color: var(--ck-white); font-size: 1.3rem; line-height: 1.25; font-weight: 700; font-variant-numeric: tabular-nums;
-}
-:is(.gauges, .fs-cockpit .fs-gauges) .g-unit { grid-row: 1 / 3; grid-column: 4; color: var(--ck-amber); font-size: .72rem; font-weight: 600; }
+:is(.gauges, .fs-cockpit .fs-gauges) .gfill { display: block; position: absolute; top: 0; bottom: 4px; z-index: -1; background: color-mix(in srgb, var(--zc, var(--av-teal)) 38%, transparent); box-shadow: inset -2px 0 0 color-mix(in srgb, var(--zc, var(--av-teal)) 70%, transparent); transition: left .25s linear, width .25s linear; }
+:is(.gauges, .fs-cockpit .fs-gauges) .gzone { display: block; position: absolute; left: 0; right: 0; bottom: 0; height: 4px; z-index: -1; opacity: .85; }
+:is(.gauges, .fs-cockpit .fs-gauges) .g-name { grid-row: 1; grid-column: 1; align-self: end; color: #e9eef1; font-size: .8rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 2px #000; }
+:is(.gauges, .fs-cockpit .fs-gauges) .g-range { display: block; grid-row: 2; grid-column: 1; align-self: start; color: #9fb0bc; font-size: .66rem; font-variant-numeric: tabular-nums; letter-spacing: .05em; text-shadow: 0 1px 2px #000; }
+:is(.gauges, .fs-cockpit .fs-gauges) .g-val { grid-row: 1 / 3; grid-column: 2; color: #fff; font-size: 2.1rem; line-height: 1; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: -.01em; text-align: right; text-shadow: 0 0 3px #000, 0 0 3px #000, 0 1px 4px #000; }
+:is(.gauges, .fs-cockpit .fs-gauges) .g-unit { grid-row: 1 / 3; grid-column: 3; color: var(--av-amber); font-size: .8rem; font-weight: 700; text-shadow: 0 1px 2px #000; }
 :is(.gauges, .fs-cockpit .fs-gauges) .gbar { display: none; }
-:is(.gauges, .fs-cockpit .fs-gauges) .g-warn { border-color: var(--ck-orange); } :is(.gauges, .fs-cockpit .fs-gauges) .g-warn .g-val { color: var(--ck-orange); }
-:is(.gauges, .fs-cockpit .fs-gauges) .g-critical { border-color: var(--ck-red); } :is(.gauges, .fs-cockpit .fs-gauges) .g-critical .g-val { color: var(--ck-red); }
-:is(.gauges, .fs-cockpit .fs-gauges) .g-watch .g-val { color: var(--ck-yellow); }
-.fs-cockpit { background: #0b0f12; }
-.fs-cockpit .fs-gauges { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 5px 8px; }
+:is(.gauges, .fs-cockpit .fs-gauges) .gauge { --zc: var(--av-teal); }
+:is(.gauges, .fs-cockpit .fs-gauges) .g-watch { --zc: var(--yellow); }
+:is(.gauges, .fs-cockpit .fs-gauges) .g-warn { --zc: var(--orange); border-color: var(--orange); }
+:is(.gauges, .fs-cockpit .fs-gauges) .g-critical { --zc: var(--red); border-color: var(--red); }
+:is(.gauges, .fs-cockpit .fs-gauges) .g-critical .g-val { animation: blink .9s infinite; }
+.fs-cockpit .fs-gauges { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 5px 8px; }
+.fs-cockpit .g-val { font-size: clamp(2.1rem, 6vmin, 3.2rem); }
 .g-watch .g-val { color: var(--yellow); }
 .log { max-height: 200px; overflow: auto; font-size: .72rem; background: var(--bg); padding: .5rem; border-radius: 8px; }
 canvas.chart { width: 100%; height: auto; background: var(--bg); border-radius: 8px; margin: .4rem 0; }
@@ -330,3 +309,33 @@ body.stage-hidden .show-model { display: block; position: fixed; right: max(12px
 .hold-name { font-size: .92rem; margin-bottom: 5px; }
 .hold-btns { display: flex; gap: 6px; flex-wrap: wrap; }
 .hold-btns .btn { white-space: nowrap; }
+
+/* ---------- Aviation chrome: placards, annunciators, bezel keys ---------- */
+html, body { font-family: "Roboto Condensed", "Arial Narrow", system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+h3 { color: var(--av-amber); font-weight: 800; letter-spacing: .14em; font-size: .78rem; display: flex; align-items: center; gap: .5rem; }
+.sec-head h3::after, section > h3::after { content: ''; flex: 1; min-width: 1rem; height: 1px; background: linear-gradient(90deg, color-mix(in srgb, var(--av-amber) 55%, transparent), transparent); }
+.top { background: linear-gradient(180deg, #27313a, #1a2127); border-bottom: 1px solid #05080a; box-shadow: inset 0 -1px 0 rgba(255, 255, 255, .04); }
+.veh #veh-name { text-transform: uppercase; letter-spacing: .08em; }
+.odo { border-radius: 3px; background: #050708; border-color: #000; box-shadow: inset 0 1px 3px #000; font-variant-numeric: tabular-nums; letter-spacing: .06em; }
+.tabs { background: linear-gradient(180deg, #222b32, #192026); border-bottom: 1px solid #05080a; }
+.tabs button { text-transform: uppercase; letter-spacing: .1em; font-size: .68rem; font-weight: 700; }
+.tabs button.on { color: var(--av-amber); border-bottom-color: var(--av-amber); }
+.card {
+  border-radius: 6px; border-color: #070a0c;
+  background: var(--av-screw) 4px 4px / 8px 8px no-repeat, var(--av-screw) calc(100% - 4px) 4px / 8px 8px no-repeat,
+    var(--av-screw) 4px calc(100% - 4px) / 8px 8px no-repeat, var(--av-screw) calc(100% - 4px) calc(100% - 4px) / 8px 8px no-repeat,
+    linear-gradient(180deg, #26303a, #1c242b);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06), 0 1px 0 #000;
+}
+.btn { border-radius: 4px; border-color: #070a0c; background: linear-gradient(180deg, #34404a, #252e36); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .1), 0 1px 2px #000; text-transform: uppercase; letter-spacing: .08em; font-size: .8rem; font-weight: 700; color: #eef2f4; }
+.btn.small { font-size: .7rem; }
+.btn:hover { border-color: var(--av-amber); }
+.btn.primary { background: linear-gradient(180deg, #ffc95a, #e9a52a); border-color: #6b4a0c; color: #141414; }
+.btn.danger { background: linear-gradient(180deg, #ff5a4e, #d6291f); border-color: #5c120d; color: #fff; }
+.status { border-radius: 2px; text-transform: uppercase; letter-spacing: .1em; font-weight: 800; font-size: .66rem; }
+.st-connected { background: var(--green); color: #06210f; } .st-connecting { background: var(--yellow); color: #1b1500; } .st-error { background: var(--red); color: #fff; }
+input:not([type=checkbox]):not([type=range]):not([type=color]), select, textarea { border-radius: 3px; background: #07090b; border-color: #000; box-shadow: inset 0 1px 3px #000; }
+input:focus, select:focus, textarea:focus { outline-color: var(--av-amber); }
+.legend { border-radius: 3px; text-transform: uppercase; letter-spacing: .06em; font-size: .68rem; }
+.chip { border-radius: 2px; text-transform: uppercase; letter-spacing: .06em; }
+.obd-fs .fs-bar { border-bottom: 1px solid var(--line); padding-bottom: .4rem; text-transform: uppercase; letter-spacing: .08em; }
