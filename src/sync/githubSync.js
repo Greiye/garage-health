@@ -8,6 +8,13 @@ import { db, getSetting, setSetting, LOCAL_ONLY_SETTINGS } from '../data/db.js';
 //   garage/attachments/<sha256>      photo/receipt bytes, content-addressed so each uploads once
 //   garage/conflicts/<time>-<dev>.json   copy of the side that lost a conflict
 //
+// OBD sessions: raw logs never leave the device. Each device chooses (setting
+// syncObd, kept on that device) whether its session SUMMARIES go to the repo:
+//   'off' (default)  no OBD session data is sent at all
+//   'summary'        test, summary numbers, min/avg/max and alerts; no rows
+// On pull, sessions are merged by uid: local raw rows are kept, and sessions
+// that exist only on this device stay.
+//
 // Model: whole-snapshot sync with change tracking. Each device remembers the
 // data.json blob sha it last synced. On sync:
 //   remote unchanged + local changed  → push
@@ -110,12 +117,22 @@ async function sha256(blob) {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+// ---------- OBD sessions ----------
+export const obdSyncMode = async () => ((await getSetting('syncObd')) === 'summary' ? 'summary' : 'off');
+export const setObdSyncMode = async (mode) => { await setSetting('syncObd', mode === 'summary' ? 'summary' : 'off'); await setSetting('syncState', { ...((await getSetting('syncState')) || {}), dirty: true }); };
+import { mergeSessions } from './mergeSessions.js';
+export { mergeSessions };
+
 // ---------- snapshot ----------
 async function snapshot() {
   const out = { app: 'garage-health', format: 'sync-1', savedAt: new Date().toISOString(), tables: {} };
   for (const t of db.tables) {
     let rows = await t.toArray();
     if (t.name === 'settings') rows = rows.filter((r) => !LOCAL_ONLY_SETTINGS.includes(r.key));
+    if (t.name === 'obdSessions') {
+      if ((await obdSyncMode()) === 'off') continue; // table left out entirely
+      rows = rows.map(({ rows: _raw, ...rest }) => rest);
+    }
     if (t.name === 'attachments') {
       for (const r of rows) {
         if (!r.hash && r.blob instanceof Blob) {
@@ -146,6 +163,7 @@ async function applySnapshot(cfg, data) {
     if (b) { r.blob = new Blob([b], { type: r.type || 'application/octet-stream' }); byHash.set(r.hash, r.blob); }
   }
   const keep = (await db.settings.toArray()).filter((r) => LOCAL_ONLY_SETTINGS.includes(r.key));
+  const localSessions = await db.obdSessions.toArray();
   suppress++;
   try {
     await db.transaction('rw', db.tables, async () => {
@@ -153,6 +171,7 @@ async function applySnapshot(cfg, data) {
         await t.clear();
         let rs = data.tables[t.name] || [];
         if (t.name === 'settings') rs = [...rs.filter((r) => !LOCAL_ONLY_SETTINGS.includes(r.key)), ...keep];
+        if (t.name === 'obdSessions') rs = mergeSessions(localSessions, data.tables.obdSessions);
         if (rs.length) await t.bulkAdd(rs);
       }
     });

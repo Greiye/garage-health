@@ -1,6 +1,7 @@
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import { PIDS } from './pids.js';
 import { parseDtcResponse } from './dtc.js';
+import { dueOnCycle } from './budget.js';
 
 // Native Bluetooth Classic bridge: android/app/src/main/java/com/mike/garagehealth/ObdSerialPlugin.java
 const ObdSerial = registerPlugin('ObdSerial');
@@ -199,7 +200,8 @@ export class DemoTransport {
     try { return await this.reply(cmd); } finally { this.busy = null; }
   }
   async reply(cmd) {
-    await new Promise((r) => setTimeout(r, 25 + Math.random() * 40));
+    // About 8 requests per second, like a basic ELM327 on J1850 PWM.
+    await new Promise((r) => setTimeout(r, 95 + Math.random() * 40));
     const c = cmd.toUpperCase().replace(/\s/g, '');
     const t = (Date.now() - this.t0) / 1000;
     const hx = (n) => Math.max(0, Math.min(255, Math.round(n))).toString(16).toUpperCase().padStart(2, '0');
@@ -321,44 +323,57 @@ export class Elm327 {
 }
 
 // Poll loop: reads the chosen PIDs (that the car supports) plus adapter
-// voltage, and emits one sample object per pass.
+// voltage, and emits one sample object per pass. Slow channels (coolant, trims,
+// voltage...) are read once every SLOW_EVERY passes so fast ones update more
+// often (src/obd/budget.js). rps is the adapter's measured requests per second.
 export class Poller {
   // rateMs: minimum time per full cycle (0 = as fast as the adapter answers).
-  constructor(elm, pids, onSample, { rateMs = 0 } = {}) {
+  constructor(elm, pids, onSample, { rateMs = 0, voltage = true } = {}) {
     this.elm = elm;
     this.onSample = onSample;
     this.rateMs = rateMs;
+    this.voltage = voltage;
     this.running = false;
     this.hz = 0;
+    this.rps = 0;
     this.setPids(pids);
   }
   setPids(pids) { this.pids = [...new Set(pids)].filter((p) => this.elm.supported.has(p)); }
   setRate(ms) { this.rateMs = ms; this.wake?.(); }
   sleep(ms) { return new Promise((r) => { const t = setTimeout(r, ms); this.wake = () => { clearTimeout(t); r(); }; }); }
+  items() {
+    return [...this.pids.map((pid) => ({ pid, ch: PIDS[pid].ch })), ...(this.voltage ? [{ pid: 'ATRV', ch: 'voltage' }] : [])];
+  }
   async start() {
     this.running = true;
-    let n = 0;
+    this.done = new Promise((r) => { this.finish = r; });
+    let n = 0, reqs = 0, busyMs = 0;
     while (this.running) {
       const t0 = Date.now();
       const sample = { t: t0 };
-      for (const pid of this.pids) {
+      for (const it of dueOnCycle(this.items(), n)) {
         if (!this.running) break;
+        const q0 = Date.now();
         try {
-          const v = await this.elm.readPid(pid);
-          if (v != null) sample[PIDS[pid].ch] = v;
+          const v = it.pid === 'ATRV' ? await this.elm.readVoltage() : await this.elm.readPid(it.pid);
+          if (v != null) sample[it.ch] = v;
         } catch (e) { /* skip one slow PID */ }
+        reqs++; busyMs += Date.now() - q0;
       }
-      if (n++ % 5 === 0 || sample.voltage == null) {
-        try { const v = await this.elm.readVoltage(); if (v != null) sample.voltage = v; } catch {}
-      }
+      n++;
+      // Requests per second over a sliding window of about 20 s.
+      if (busyMs > 20000) { reqs /= 2; busyMs /= 2; }
+      this.rps = busyMs ? (reqs * 1000) / busyMs : 0;
       this.onSample(sample);
       const left = this.rateMs - (Date.now() - t0);
       if (left > 0 && this.running) await this.sleep(left);
       const dt = Date.now() - t0;
       this.hz = dt ? 1000 / dt : 0;
     }
+    this.finish();
   }
-  stop() { this.running = false; this.wake?.(); }
+  // Resolves once the loop has stopped and no poll request is in flight.
+  stop() { this.running = false; this.wake?.(); return this.done || Promise.resolve(); }
 }
 
 // Background recording: a foreground service keeps the recording alive with another app in front.
